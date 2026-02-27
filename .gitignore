@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Data (generated)
+backend/data/html/
+backend/data/images/
+backend/data/*.db
+backend/data/*.db-shm
+backend/data/*.db-wal
+backend/data/*.backup*
+backend/data/extraction_debug/
+
+# Env
+.env
+.env.local
+
+# PDF source
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Screenshots (dev artifacts)
+*.png
+!icon.png
+!frontend/public/*.png
+
+# Playwright MCP
+.playwright-mcp/
+
+# Claude internal
+.claude/

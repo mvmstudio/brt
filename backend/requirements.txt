@@ -1,0 +1,14 @@
+fastapi==0.115.11
+uvicorn[standard]==0.34.0
+aiosqlite==0.21.0
+pymupdf==1.27.1
+pymupdf4llm==0.0.20
+qdrant-client==1.13.3
+openai==1.68.0
+httpx[socks]
+markdown==3.10.2
+python-dotenv==1.1.0
+pydantic-settings==2.8.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.1
