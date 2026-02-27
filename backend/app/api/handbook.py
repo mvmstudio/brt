@@ -299,6 +299,223 @@ async def list_organ_preparations(
     }
 
 
+# ─── Relations (cross-entity) ────────────────────────────────────
+
+ENTITY_TYPES = {"condition", "remedy", "nosode", "etiology", "organ"}
+
+# nosode.category ↔ etiology.agent_type mapping
+_CATEGORY_MAP = {
+    "bacteria_cocci": "bacteria_cocci",
+    "bacteria_bacilli": "bacteria_bacilli",
+    "virus": "virus",
+    "protozoa_helminths_fungi": "parasite_fungi",
+    "parasite_fungi": "protozoa_helminths_fungi",
+}
+
+
+def _parse_remedies(raw: str | None) -> set[str]:
+    """Parse remedies_list JSON → lowercase set."""
+    if not raw:
+        return set()
+    try:
+        return {n.lower() for n in json.loads(raw)}
+    except (json.JSONDecodeError, TypeError):
+        return set()
+
+
+async def _resolve_remedies(db, remedy_names: list[str]) -> list[dict]:
+    """Resolve remedy names → relation dicts via alias table."""
+    result = []
+    seen_ids: set[int] = set()
+    for name in remedy_names:
+        matched = await db.execute_fetchall(
+            "SELECT r.id, r.name_lat FROM remedy_aliases ra "
+            "JOIN remedies r ON r.id = ra.canonical_remedy_id "
+            "WHERE ra.alias = ? COLLATE NOCASE",
+            (name,),
+        )
+        if matched and matched[0]["id"] not in seen_ids:
+            seen_ids.add(matched[0]["id"])
+            result.append({"type": "remedy", "id": matched[0]["id"], "name": matched[0]["name_lat"]})
+        elif not matched:
+            result.append({"type": "remedy", "id": None, "name": name})
+    return result
+
+
+async def _shared_remedy_entities(
+    db, my_remedies: set[str], table: str, name_col: str,
+    entity_type: str, exclude_id: int | None = None, limit: int = 10,
+) -> list[dict]:
+    """Find entities in table sharing remedies, ranked by overlap count."""
+    if not my_remedies:
+        return []
+    rows = await db.execute_fetchall(
+        f"SELECT id, {name_col}, remedies_list FROM {table} WHERE remedies_list IS NOT NULL"
+    )
+    scored = []
+    for r in rows:
+        if exclude_id and r["id"] == exclude_id:
+            continue
+        their = _parse_remedies(r["remedies_list"])
+        overlap = len(my_remedies & their)
+        if overlap > 0:
+            scored.append((overlap, r["id"], r[name_col]))
+    scored.sort(key=lambda x: -x[0])
+    return [{"type": entity_type, "id": s[1], "name": s[2]} for s in scored[:limit]]
+
+
+async def _remedy_reverse_lookup(db, entity_id: int, table: str, name_col: str, entity_type: str) -> list[dict]:
+    """Find entities whose remedies_list contains any alias of remedy_id."""
+    aliases = await db.execute_fetchall(
+        "SELECT alias FROM remedy_aliases WHERE canonical_remedy_id = ?", (entity_id,),
+    )
+    alias_list = [a["alias"] for a in aliases]
+    if not alias_list:
+        return []
+    rows = await db.execute_fetchall(
+        f"SELECT id, {name_col}, remedies_list FROM {table} WHERE remedies_list IS NOT NULL"
+    )
+    result = []
+    alias_lower = {a.lower() for a in alias_list}
+    for r in rows:
+        rl = _parse_remedies(r["remedies_list"])
+        if alias_lower & rl:
+            result.append({"type": entity_type, "id": r["id"], "name": r[name_col]})
+    return result
+
+
+@router.get("/handbook/relations/{entity_type}/{entity_id}")
+async def get_relations(entity_type: str, entity_id: int):
+    if entity_type not in ENTITY_TYPES:
+        raise HTTPException(400, f"Unknown entity_type: {entity_type}")
+
+    db = await get_db()
+    center = None
+    relations: list[dict] = []
+
+    if entity_type == "condition":
+        rows = await db.execute_fetchall(
+            "SELECT id, condition_name, remedies_list FROM therapeutic_index WHERE id = ?",
+            (entity_id,),
+        )
+        if not rows:
+            raise HTTPException(404, "Condition not found")
+        center = {"type": "condition", "id": rows[0]["id"], "name": rows[0]["condition_name"]}
+        raw_names = json.loads(rows[0]["remedies_list"])
+        my_remedies = _parse_remedies(rows[0]["remedies_list"])
+
+        # Direct remedies
+        relations.extend(await _resolve_remedies(db, raw_names))
+        # Cross-entity via shared remedies
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "nosodes", "name_lat", "nosode"))
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "etiology", "agent_name", "etiology"))
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "organ_preparations", "organ_name", "organ"))
+
+    elif entity_type == "remedy":
+        rows = await db.execute_fetchall(
+            "SELECT id, name_lat FROM remedies WHERE id = ?", (entity_id,),
+        )
+        if not rows:
+            raise HTTPException(404, "Remedy not found")
+        center = {"type": "remedy", "id": rows[0]["id"], "name": rows[0]["name_lat"]}
+
+        # All entity types that reference this remedy (top-10 each)
+        for tbl, col, etype in [
+            ("therapeutic_index", "condition_name", "condition"),
+            ("nosodes", "name_lat", "nosode"),
+            ("etiology", "agent_name", "etiology"),
+            ("organ_preparations", "organ_name", "organ"),
+        ]:
+            found = await _remedy_reverse_lookup(db, entity_id, tbl, col, etype)
+            relations.extend(found[:10])
+
+    elif entity_type == "nosode":
+        rows = await db.execute_fetchall(
+            "SELECT id, name_lat, remedies_list, category FROM nosodes WHERE id = ?",
+            (entity_id,),
+        )
+        if not rows:
+            raise HTTPException(404, "Nosode not found")
+        center = {"type": "nosode", "id": rows[0]["id"], "name": rows[0]["name_lat"]}
+        raw_names = json.loads(rows[0]["remedies_list"]) if rows[0]["remedies_list"] else []
+        my_remedies = _parse_remedies(rows[0]["remedies_list"])
+
+        # Direct remedies
+        relations.extend(await _resolve_remedies(db, raw_names))
+        # Cross-entity via shared remedies
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "therapeutic_index", "condition_name", "condition"))
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "organ_preparations", "organ_name", "organ"))
+        # Etiology via matching category
+        cat = rows[0]["category"]
+        mapped_type = _CATEGORY_MAP.get(cat)
+        if mapped_type:
+            etio_rows = await db.execute_fetchall(
+                "SELECT id, agent_name FROM etiology WHERE agent_type = ? LIMIT 10",
+                (mapped_type,),
+            )
+            for e in etio_rows:
+                relations.append({"type": "etiology", "id": e["id"], "name": e["agent_name"]})
+        # Also via shared remedies (if category match didn't find enough)
+        etio_from_remedies = await _shared_remedy_entities(db, my_remedies, "etiology", "agent_name", "etiology")
+        existing_etio_ids = {r["id"] for r in relations if r["type"] == "etiology"}
+        for e in etio_from_remedies:
+            if e["id"] not in existing_etio_ids:
+                relations.append(e)
+
+    elif entity_type == "etiology":
+        rows = await db.execute_fetchall(
+            "SELECT id, agent_name, remedies_list, agent_type, disease_system FROM etiology WHERE id = ?",
+            (entity_id,),
+        )
+        if not rows:
+            raise HTTPException(404, "Etiology not found")
+        center = {"type": "etiology", "id": rows[0]["id"], "name": rows[0]["agent_name"]}
+        raw_names = json.loads(rows[0]["remedies_list"]) if rows[0]["remedies_list"] else []
+        my_remedies = _parse_remedies(rows[0]["remedies_list"])
+
+        # Direct remedies
+        relations.extend(await _resolve_remedies(db, raw_names))
+        # Cross-entity via shared remedies
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "therapeutic_index", "condition_name", "condition"))
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "organ_preparations", "organ_name", "organ"))
+        # Nosodes via matching agent_type
+        agent_type = rows[0]["agent_type"]
+        mapped_cat = _CATEGORY_MAP.get(agent_type)
+        if mapped_cat:
+            nos_rows = await db.execute_fetchall(
+                "SELECT id, name_lat FROM nosodes WHERE category = ? LIMIT 10",
+                (mapped_cat,),
+            )
+            for n in nos_rows:
+                relations.append({"type": "nosode", "id": n["id"], "name": n["name_lat"]})
+        # Also via shared remedies
+        nos_from_remedies = await _shared_remedy_entities(db, my_remedies, "nosodes", "name_lat", "nosode")
+        existing_nos_ids = {r["id"] for r in relations if r["type"] == "nosode"}
+        for n in nos_from_remedies:
+            if n["id"] not in existing_nos_ids:
+                relations.append(n)
+
+    elif entity_type == "organ":
+        rows = await db.execute_fetchall(
+            "SELECT id, organ_name, remedies_list FROM organ_preparations WHERE id = ?",
+            (entity_id,),
+        )
+        if not rows:
+            raise HTTPException(404, "Organ preparation not found")
+        center = {"type": "organ", "id": rows[0]["id"], "name": rows[0]["organ_name"]}
+        raw_names = json.loads(rows[0]["remedies_list"]) if rows[0]["remedies_list"] else []
+        my_remedies = _parse_remedies(rows[0]["remedies_list"])
+
+        # Direct remedies
+        relations.extend(await _resolve_remedies(db, raw_names))
+        # Cross-entity via shared remedies
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "therapeutic_index", "condition_name", "condition"))
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "nosodes", "name_lat", "nosode"))
+        relations.extend(await _shared_remedy_entities(db, my_remedies, "etiology", "agent_name", "etiology"))
+
+    return {"center": center, "relations": relations}
+
+
 # ─── Stats ────────────────────────────────────────────────────────
 
 @router.get("/handbook/stats")

@@ -2,16 +2,18 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
-import { api, type OrganPrep } from "@/lib/api"
+import { api, type OrganPrep, type EntityType } from "@/lib/api"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
+import { RelationsSection } from "./RelationsSection"
 
 interface OrgansTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
+  onNavigate?: (type: string, entityId: number) => void
 }
 
-export function OrgansTab({ initialExpandedId, onAuthRequired }: OrgansTabProps) {
+export function OrgansTab({ initialExpandedId, onAuthRequired, onNavigate }: OrgansTabProps) {
   const [entries, setEntries] = useState<OrganPrep[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCat, setSelectedCat] = useState("")
@@ -202,6 +204,11 @@ export function OrgansTab({ initialExpandedId, onAuthRequired }: OrgansTabProps)
                             </div>
                           </>
                         )}
+                        <RelationsSection
+                          entityType="organ"
+                          entityId={e.id}
+                          onNavigate={onNavigate as (type: EntityType, id: number) => void}
+                        />
                       </div>
                     )}
                   </div>

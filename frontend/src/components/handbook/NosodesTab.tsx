@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
-import { api, type Nosode } from "@/lib/api"
+import { api, type Nosode, type EntityType } from "@/lib/api"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
+import { RelationsSection } from "./RelationsSection"
 
 const CATEGORY_LABELS: Record<string, string> = {
   bacteria_cocci: "Бактерии (кокки)",
@@ -16,9 +17,10 @@ const CATEGORY_LABELS: Record<string, string> = {
 interface NosodesTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
+  onNavigate?: (type: string, entityId: number) => void
 }
 
-export function NosodesTab({ initialExpandedId, onAuthRequired }: NosodesTabProps) {
+export function NosodesTab({ initialExpandedId, onAuthRequired, onNavigate }: NosodesTabProps) {
   const [nosodes, setNosodes] = useState<Nosode[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCat, setSelectedCat] = useState<string>("")
@@ -220,6 +222,11 @@ export function NosodesTab({ initialExpandedId, onAuthRequired }: NosodesTabProp
                         </div>
                       </>
                     )}
+                    <RelationsSection
+                      entityType="nosode"
+                      entityId={n.id}
+                      onNavigate={onNavigate as (type: EntityType, id: number) => void}
+                    />
                   </div>
                 )}
               </div>

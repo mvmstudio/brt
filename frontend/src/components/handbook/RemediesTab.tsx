@@ -2,15 +2,17 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { ArrowLeft, AlertCircle, SearchX, RefreshCw } from "lucide-react"
-import { api, type Remedy, type RemedyDetail } from "@/lib/api"
+import { api, type Remedy, type RemedyDetail, type EntityType } from "@/lib/api"
 import { FavoriteButton } from "./FavoriteButton"
+import { RelationsSection } from "./RelationsSection"
 
 interface RemediesTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
+  onNavigate?: (type: string, entityId: number) => void
 }
 
-export function RemediesTab({ initialExpandedId, onAuthRequired }: RemediesTabProps) {
+export function RemediesTab({ initialExpandedId, onAuthRequired, onNavigate }: RemediesTabProps) {
   const [remedies, setRemedies] = useState<Remedy[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -196,6 +198,13 @@ export function RemediesTab({ initialExpandedId, onAuthRequired }: RemediesTabPr
             </div>
           </div>
         )}
+
+        {/* Relations graph/list */}
+        <RelationsSection
+          entityType="remedy"
+          entityId={detail.id}
+          onNavigate={onNavigate as (type: EntityType, id: number) => void}
+        />
       </div>
     )
   }

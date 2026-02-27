@@ -178,6 +178,22 @@ export interface FavoriteItem {
   created_at: string
 }
 
+// ─── Relations types ──────────────────────────
+
+export type EntityType = "condition" | "remedy" | "nosode" | "etiology" | "organ"
+
+export interface RelationNode {
+  type: EntityType
+  id: number | null
+  name: string
+  relation?: string
+}
+
+export interface RelationsResponse {
+  center: RelationNode
+  relations: RelationNode[]
+}
+
 export const api = {
   getToc: () => fetchAPI<TocEntry[]>("/api/toc"),
 
@@ -290,6 +306,9 @@ export const api = {
         agent_types: string[]
       }>(`/api/handbook/etiology?${params}`)
     },
+
+    relations: (entityType: EntityType, entityId: number) =>
+      fetchAPI<RelationsResponse>(`/api/handbook/relations/${entityType}/${entityId}`),
 
     organs: (category?: string, limit = 200) => {
       const params = new URLSearchParams({ limit: String(limit) })

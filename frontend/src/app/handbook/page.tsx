@@ -154,30 +154,35 @@ export default function HandbookPage() {
           <ConditionsTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
+            onNavigate={handleSearchNavigate}
           />
         )}
         {activeTab === "remedies" && (
           <RemediesTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
+            onNavigate={handleSearchNavigate}
           />
         )}
         {activeTab === "nosodes" && (
           <NosodesTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
+            onNavigate={handleSearchNavigate}
           />
         )}
         {activeTab === "etiology" && (
           <EtiologyTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
+            onNavigate={handleSearchNavigate}
           />
         )}
         {activeTab === "organs" && (
           <OrgansTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
+            onNavigate={handleSearchNavigate}
           />
         )}
         {activeTab === "favorites" && (

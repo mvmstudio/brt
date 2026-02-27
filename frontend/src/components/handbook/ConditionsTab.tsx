@@ -2,16 +2,18 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
-import { api, type Condition } from "@/lib/api"
+import { api, type Condition, type EntityType } from "@/lib/api"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
+import { RelationsSection } from "./RelationsSection"
 
 interface ConditionsTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
+  onNavigate?: (type: string, entityId: number) => void
 }
 
-export function ConditionsTab({ initialExpandedId, onAuthRequired }: ConditionsTabProps) {
+export function ConditionsTab({ initialExpandedId, onAuthRequired, onNavigate }: ConditionsTabProps) {
   const [conditions, setConditions] = useState<Condition[]>([])
   const [filtered, setFiltered] = useState<Condition[]>([])
   const [loading, setLoading] = useState(true)
@@ -148,6 +150,11 @@ export function ConditionsTab({ initialExpandedId, onAuthRequired }: ConditionsT
                     </span>
                   ))}
                 </div>
+                <RelationsSection
+                  entityType="condition"
+                  entityId={c.id}
+                  onNavigate={onNavigate as (type: EntityType, id: number) => void}
+                />
               </div>
             )}
           </div>

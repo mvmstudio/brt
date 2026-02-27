@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
-import { api, type EtiologyEntry } from "@/lib/api"
+import { api, type EtiologyEntry, type EntityType } from "@/lib/api"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
+import { RelationsSection } from "./RelationsSection"
 
 const AGENT_TYPE_LABELS: Record<string, string> = {
   virus: "Вирусы",
@@ -16,9 +17,10 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
 interface EtiologyTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
+  onNavigate?: (type: string, entityId: number) => void
 }
 
-export function EtiologyTab({ initialExpandedId, onAuthRequired }: EtiologyTabProps) {
+export function EtiologyTab({ initialExpandedId, onAuthRequired, onNavigate }: EtiologyTabProps) {
   const [entries, setEntries] = useState<EtiologyEntry[]>([])
   const [systems, setSystems] = useState<string[]>([])
   const [agentTypes, setAgentTypes] = useState<string[]>([])
@@ -252,6 +254,11 @@ export function EtiologyTab({ initialExpandedId, onAuthRequired }: EtiologyTabPr
                             </div>
                           </>
                         )}
+                        <RelationsSection
+                          entityType="etiology"
+                          entityId={e.id}
+                          onNavigate={onNavigate as (type: EntityType, id: number) => void}
+                        />
                       </div>
                     )}
                   </div>
