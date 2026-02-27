@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import Image from "next/image"
 import { LogIn } from "lucide-react"
 import { useAuthStore } from "@/stores/auth"
 import { api } from "@/lib/api"
@@ -72,6 +73,16 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         }}
       >
         <div className="w-full max-w-sm">
+          <div className="flex justify-center mb-5">
+            <Image
+              src="/icon-192x192.png"
+              alt="ЭИМ"
+              width={80}
+              height={80}
+              className="rounded-2xl"
+              priority
+            />
+          </div>
           <h1
             className="text-xl font-semibold mb-1 text-center"
             style={{ color: "var(--text-primary)" }}
