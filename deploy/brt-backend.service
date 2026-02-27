@@ -1,0 +1,35 @@
+[Unit]
+Description=BRT Backend (FastAPI/Uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/brt.mvm.st/backend
+
+EnvironmentFile=/opt/brt.mvm.st/backend/.env.production
+
+ExecStart=/opt/brt.mvm.st/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+MemoryMax=512M
+CPUQuota=30%
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=brt-backend
+
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
