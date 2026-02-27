@@ -9,9 +9,10 @@ interface FavoriteButtonProps {
   entityType: string
   entityId: number
   onAuthRequired?: () => void
+  onToggle?: () => void
 }
 
-export function FavoriteButton({ entityType, entityId, onAuthRequired }: FavoriteButtonProps) {
+export function FavoriteButton({ entityType, entityId, onAuthRequired, onToggle }: FavoriteButtonProps) {
   const token = useAuthStore((s) => s.token)
   const isFav = useAuthStore((s) => s.isFavorite(entityType, entityId))
   const addFavorite = useAuthStore((s) => s.addFavorite)
@@ -32,6 +33,7 @@ export function FavoriteButton({ entityType, entityId, onAuthRequired }: Favorit
           addFavorite(entityType, entityId)
           await api.favorites.add(entityType, entityId)
         }
+        onToggle?.()
       } catch {
         // Revert on error
         if (isFav) {

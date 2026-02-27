@@ -3,17 +3,15 @@
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
 import { api, type OrganPrep } from "@/lib/api"
-import { useAuthStore } from "@/stores/auth"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
 
 interface OrgansTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
-  showFavoritesOnly?: boolean
 }
 
-export function OrgansTab({ initialExpandedId, onAuthRequired, showFavoritesOnly }: OrgansTabProps) {
+export function OrgansTab({ initialExpandedId, onAuthRequired }: OrgansTabProps) {
   const [entries, setEntries] = useState<OrganPrep[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCat, setSelectedCat] = useState("")
@@ -66,13 +64,8 @@ export function OrgansTab({ initialExpandedId, onAuthRequired, showFavoritesOnly
     load(cat || undefined)
   }
 
-  const favorites = useAuthStore((s) => s.favorites)
-
   const filtered = (() => {
     let result = entries
-    if (showFavoritesOnly) {
-      result = result.filter((e) => favorites.has(`organ:${e.id}`))
-    }
     if (filter.trim()) {
       const q = filter.toLowerCase()
       result = result.filter((e) =>

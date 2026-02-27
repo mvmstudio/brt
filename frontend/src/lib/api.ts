@@ -174,6 +174,7 @@ export interface FavoriteItem {
   id: number
   entity_type: string
   entity_id: number
+  entity_name?: string
   created_at: string
 }
 
@@ -223,10 +224,15 @@ export const api = {
   // ─── Favorites ─────────────────────────────────
 
   favorites: {
-    list: (entityType?: string) =>
-      fetchAPI<{ favorites: FavoriteItem[] }>(
-        entityType ? `/api/favorites?entity_type=${entityType}` : "/api/favorites"
-      ),
+    list: (entityType?: string, enriched?: boolean) => {
+      const params = new URLSearchParams()
+      if (entityType) params.set("entity_type", entityType)
+      if (enriched) params.set("enriched", "true")
+      const qs = params.toString()
+      return fetchAPI<{ favorites: FavoriteItem[] }>(
+        `/api/favorites${qs ? `?${qs}` : ""}`
+      )
+    },
 
     add: (entity_type: string, entity_id: number) =>
       fetchAPI<{ status: string }>("/api/favorites", {

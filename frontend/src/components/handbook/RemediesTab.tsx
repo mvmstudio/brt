@@ -3,16 +3,14 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { ArrowLeft, AlertCircle, SearchX, RefreshCw } from "lucide-react"
 import { api, type Remedy, type RemedyDetail } from "@/lib/api"
-import { useAuthStore } from "@/stores/auth"
 import { FavoriteButton } from "./FavoriteButton"
 
 interface RemediesTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
-  showFavoritesOnly?: boolean
 }
 
-export function RemediesTab({ initialExpandedId, onAuthRequired, showFavoritesOnly }: RemediesTabProps) {
+export function RemediesTab({ initialExpandedId, onAuthRequired }: RemediesTabProps) {
   const [remedies, setRemedies] = useState<Remedy[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,14 +55,9 @@ export function RemediesTab({ initialExpandedId, onAuthRequired, showFavoritesOn
     setDetailLoading(false)
   }
 
-  const favorites = useAuthStore((s) => s.favorites)
-
-  // Filter by name_lat, name_rus, and favorites
+  // Filter by name_lat and name_rus
   const filtered = useMemo(() => {
     let result = remedies
-    if (showFavoritesOnly) {
-      result = result.filter((r) => favorites.has(`remedy:${r.id}`))
-    }
     if (filter.trim()) {
       const q = filter.toLowerCase()
       result = result.filter(
@@ -74,7 +67,7 @@ export function RemediesTab({ initialExpandedId, onAuthRequired, showFavoritesOn
       )
     }
     return result
-  }, [filter, remedies, showFavoritesOnly, favorites])
+  }, [filter, remedies])
 
   // Build alphabet index from filtered results
   const alphabet = useMemo(() => {

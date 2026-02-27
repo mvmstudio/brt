@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
 import { api, type EtiologyEntry } from "@/lib/api"
-import { useAuthStore } from "@/stores/auth"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
 
@@ -17,10 +16,9 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
 interface EtiologyTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
-  showFavoritesOnly?: boolean
 }
 
-export function EtiologyTab({ initialExpandedId, onAuthRequired, showFavoritesOnly }: EtiologyTabProps) {
+export function EtiologyTab({ initialExpandedId, onAuthRequired }: EtiologyTabProps) {
   const [entries, setEntries] = useState<EtiologyEntry[]>([])
   const [systems, setSystems] = useState<string[]>([])
   const [agentTypes, setAgentTypes] = useState<string[]>([])
@@ -81,13 +79,8 @@ export function EtiologyTab({ initialExpandedId, onAuthRequired, showFavoritesOn
     load(selectedSystem || undefined, type || undefined)
   }
 
-  const favorites = useAuthStore((s) => s.favorites)
-
   const filtered = (() => {
     let result = entries
-    if (showFavoritesOnly) {
-      result = result.filter((e) => favorites.has(`etiology:${e.id}`))
-    }
     if (filter.trim()) {
       const q = filter.toLowerCase()
       result = result.filter((e) =>

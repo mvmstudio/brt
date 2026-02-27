@@ -3,17 +3,15 @@
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
 import { api, type Condition } from "@/lib/api"
-import { useAuthStore } from "@/stores/auth"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
 
 interface ConditionsTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
-  showFavoritesOnly?: boolean
 }
 
-export function ConditionsTab({ initialExpandedId, onAuthRequired, showFavoritesOnly }: ConditionsTabProps) {
+export function ConditionsTab({ initialExpandedId, onAuthRequired }: ConditionsTabProps) {
   const [conditions, setConditions] = useState<Condition[]>([])
   const [filtered, setFiltered] = useState<Condition[]>([])
   const [loading, setLoading] = useState(true)
@@ -54,19 +52,14 @@ export function ConditionsTab({ initialExpandedId, onAuthRequired, showFavorites
     }
   }, [initialExpandedId, loading])
 
-  const favorites = useAuthStore((s) => s.favorites)
-
   useEffect(() => {
     let result = conditions
-    if (showFavoritesOnly) {
-      result = result.filter((c) => favorites.has(`condition:${c.id}`))
-    }
     if (filter.trim()) {
       const q = filter.toLowerCase()
       result = result.filter((c) => c.condition_name.toLowerCase().includes(q))
     }
     setFiltered(result)
-  }, [filter, conditions, showFavoritesOnly, favorites])
+  }, [filter, conditions])
 
   if (loading) {
     return (

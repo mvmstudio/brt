@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { ArrowLeft, User, LogOut, Search, Stethoscope, Pill, Bug, Microscope, Heart } from "lucide-react"
+import { ArrowLeft, User, LogOut, Search, Stethoscope, Pill, Bug, Microscope, Heart, Star } from "lucide-react"
 import Link from "next/link"
 import { useReaderStore } from "@/stores/reader"
 import { useAuthStore } from "@/stores/auth"
@@ -13,6 +13,7 @@ import { RemediesTab } from "@/components/handbook/RemediesTab"
 import { NosodesTab } from "@/components/handbook/NosodesTab"
 import { EtiologyTab } from "@/components/handbook/EtiologyTab"
 import { OrgansTab } from "@/components/handbook/OrgansTab"
+import { FavoritesTab } from "@/components/handbook/FavoritesTab"
 
 const TABS = [
   { id: "search", label: "Поиск", icon: Search },
@@ -21,6 +22,7 @@ const TABS = [
   { id: "nosodes", label: "Нозоды", icon: Bug },
   { id: "etiology", label: "Этиология", icon: Microscope },
   { id: "organs", label: "Органы", icon: Heart },
+  { id: "favorites", label: "Избранное", icon: Star },
 ] as const
 
 type TabId = (typeof TABS)[number]["id"]
@@ -37,7 +39,6 @@ export default function HandbookPage() {
   const [activeTab, setActiveTab] = useState<TabId>("conditions")
   const [highlightedId, setHighlightedId] = useState<number | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false)
   const { theme } = useReaderStore()
   const user = useAuthStore((s) => s.user)
   const token = useAuthStore((s) => s.token)
@@ -72,13 +73,12 @@ export default function HandbookPage() {
     setAuthOpen(true)
   }, [])
 
-  const handleFavoritesToggle = useCallback(() => {
-    if (!token) {
-      setAuthOpen(true)
-      return
-    }
-    setShowFavoritesOnly((v) => !v)
-  }, [token])
+  const handleFavoritesNavigate = useCallback((type: string, entityId: number) => {
+    const tab = TYPE_TO_TAB[type]
+    if (!tab) return
+    setHighlightedId(entityId)
+    setActiveTab(tab)
+  }, [])
 
   return (
     <div id="handbook-root" className="flex flex-col h-dvh" style={{ background: "var(--bg-primary)" }}>
@@ -99,21 +99,6 @@ export default function HandbookPage() {
           <h1 className="flex-1 text-base font-semibold" style={{ color: "var(--text-primary)" }}>
             Справочник
           </h1>
-
-          {/* Favorites toggle */}
-          {activeTab !== "search" && (
-            <button
-              onClick={handleFavoritesToggle}
-              className="shrink-0 px-3 py-2 rounded-lg text-xs font-medium"
-              style={{
-                background: showFavoritesOnly ? "var(--accent-warm)" : "transparent",
-                color: showFavoritesOnly ? "#fff" : "var(--text-muted)",
-                border: showFavoritesOnly ? "none" : "1px solid var(--border)",
-              }}
-            >
-              {showFavoritesOnly ? "Избранное" : "Избранное"}
-            </button>
-          )}
 
           {/* Auth button */}
           {user ? (
@@ -169,35 +154,36 @@ export default function HandbookPage() {
           <ConditionsTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
-            showFavoritesOnly={showFavoritesOnly}
           />
         )}
         {activeTab === "remedies" && (
           <RemediesTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
-            showFavoritesOnly={showFavoritesOnly}
           />
         )}
         {activeTab === "nosodes" && (
           <NosodesTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
-            showFavoritesOnly={showFavoritesOnly}
           />
         )}
         {activeTab === "etiology" && (
           <EtiologyTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
-            showFavoritesOnly={showFavoritesOnly}
           />
         )}
         {activeTab === "organs" && (
           <OrgansTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
-            showFavoritesOnly={showFavoritesOnly}
+          />
+        )}
+        {activeTab === "favorites" && (
+          <FavoritesTab
+            onNavigate={handleFavoritesNavigate}
+            onAuthRequired={handleAuthRequired}
           />
         )}
       </main>

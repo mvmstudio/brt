@@ -22,6 +22,7 @@ class FavoriteRequest(BaseModel):
 @router.get("/favorites")
 async def list_favorites(
     entity_type: str | None = None,
+    enriched: bool = False,
     user: dict = Depends(require_user),
 ):
     db = await get_db()
@@ -37,7 +38,57 @@ async def list_favorites(
             "WHERE user_id = ? ORDER BY created_at DESC",
             (user["id"],),
         )
-    return {"favorites": [dict(r) for r in rows]}
+
+    favorites = [dict(r) for r in rows]
+
+    if enriched and favorites:
+        favorites = await _enrich_favorites(db, favorites)
+
+    return {"favorites": favorites}
+
+
+# Table → (table_name, name_column, secondary_name_column)
+_ENTITY_TABLE_MAP = {
+    "condition": ("therapeutic_index", "condition_name", None),
+    "remedy": ("remedies", "name_lat", "name_rus"),
+    "nosode": ("nosodes", "name_lat", "name_rus"),
+    "etiology": ("etiology", "agent_name", "agent_name_rus"),
+    "organ": ("organ_preparations", "organ_name", "organ_name_lat"),
+}
+
+
+async def _enrich_favorites(db, favorites: list[dict]) -> list[dict]:
+    """Add entity_name to each favorite by looking up the source table."""
+    grouped: dict[str, list[int]] = {}
+    for f in favorites:
+        grouped.setdefault(f["entity_type"], []).append(f["entity_id"])
+
+    name_cache: dict[str, dict[int, str]] = {}
+
+    for etype, ids in grouped.items():
+        mapping = _ENTITY_TABLE_MAP.get(etype)
+        if not mapping:
+            continue
+        table, name_col, alt_col = mapping
+        placeholders = ",".join("?" * len(ids))
+        cols = f"id, {name_col}" + (f", {alt_col}" if alt_col else "")
+        rows = await db.execute_fetchall(
+            f"SELECT {cols} FROM {table} WHERE id IN ({placeholders})", ids
+        )
+        cache = {}
+        for r in rows:
+            r = dict(r)
+            name = r[name_col] or ""
+            if alt_col and r.get(alt_col):
+                name = f"{name} ({r[alt_col]})"
+            cache[r["id"]] = name
+        name_cache[etype] = cache
+
+    for f in favorites:
+        cache = name_cache.get(f["entity_type"], {})
+        f["entity_name"] = cache.get(f["entity_id"], "")
+
+    return favorites
 
 
 @router.post("/favorites")

@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
 import { api, type Nosode } from "@/lib/api"
-import { useAuthStore } from "@/stores/auth"
 import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
 
@@ -17,10 +16,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 interface NosodesTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
-  showFavoritesOnly?: boolean
 }
 
-export function NosodesTab({ initialExpandedId, onAuthRequired, showFavoritesOnly }: NosodesTabProps) {
+export function NosodesTab({ initialExpandedId, onAuthRequired }: NosodesTabProps) {
   const [nosodes, setNosodes] = useState<Nosode[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCat, setSelectedCat] = useState<string>("")
@@ -73,13 +71,8 @@ export function NosodesTab({ initialExpandedId, onAuthRequired, showFavoritesOnl
     load(cat || undefined)
   }
 
-  const favorites = useAuthStore((s) => s.favorites)
-
   const filtered = (() => {
     let result = nosodes
-    if (showFavoritesOnly) {
-      result = result.filter((n) => favorites.has(`nosode:${n.id}`))
-    }
     if (filter.trim()) {
       const q = filter.toLowerCase()
       result = result.filter((n) =>
