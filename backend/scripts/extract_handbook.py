@@ -97,6 +97,7 @@ HANDBOOK_SCHEMA = """
         type,
         name,
         content,
+        entity_id UNINDEXED,
         tokenize='unicode61'
     );
 """
@@ -131,56 +132,56 @@ def populate_fts(db_path: str) -> int:
     count = 0
 
     # Remedies
-    for row in conn.execute("SELECT name_lat, name_rus, summary FROM remedies"):
-        content = f"{row[1] or ''} {row[2] or ''}"
+    for row in conn.execute("SELECT id, name_lat, name_rus, summary FROM remedies"):
+        content = f"{row[2] or ''} {row[3] or ''}"
         conn.execute(
-            "INSERT INTO handbook_fts (type, name, content) VALUES (?, ?, ?)",
-            ("remedy", row[0], content),
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("remedy", row[1], content, row[0]),
         )
         count += 1
 
-    # Remedy symptoms
+    # Remedy symptoms (entity_id → remedy_id for navigation)
     for row in conn.execute(
-        "SELECT r.name_lat, rs.system_name, rs.description "
+        "SELECT r.id, r.name_lat, rs.system_name, rs.description "
         "FROM remedy_symptoms rs JOIN remedies r ON r.id = rs.remedy_id"
     ):
         conn.execute(
-            "INSERT INTO handbook_fts (type, name, content) VALUES (?, ?, ?)",
-            ("remedy_symptom", f"{row[0]} — {row[1]}", row[2]),
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("remedy_symptom", f"{row[1]} — {row[2]}", row[3], row[0]),
         )
         count += 1
 
     # Therapeutic index
-    for row in conn.execute("SELECT condition_name, remedies_list FROM therapeutic_index"):
+    for row in conn.execute("SELECT id, condition_name, remedies_list FROM therapeutic_index"):
         conn.execute(
-            "INSERT INTO handbook_fts (type, name, content) VALUES (?, ?, ?)",
-            ("condition", row[0], row[1]),
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("condition", row[1], row[2], row[0]),
         )
         count += 1
 
     # Nosodes
-    for row in conn.execute("SELECT name_lat, name_rus, category FROM nosodes"):
+    for row in conn.execute("SELECT id, name_lat, name_rus, category FROM nosodes"):
         conn.execute(
-            "INSERT INTO handbook_fts (type, name, content) VALUES (?, ?, ?)",
-            ("nosode", row[0], f"{row[1] or ''} {row[2] or ''}"),
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("nosode", row[1], f"{row[2] or ''} {row[3] or ''}", row[0]),
         )
         count += 1
 
     # Etiology
-    for row in conn.execute("SELECT disease_system, agent_name, agent_name_rus FROM etiology"):
+    for row in conn.execute("SELECT id, disease_system, agent_name, agent_name_rus FROM etiology"):
         conn.execute(
-            "INSERT INTO handbook_fts (type, name, content) VALUES (?, ?, ?)",
-            ("etiology", row[1], f"{row[0]} {row[2] or ''}"),
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("etiology", row[2], f"{row[1]} {row[3] or ''}", row[0]),
         )
         count += 1
 
     # Organ preparations
     for row in conn.execute(
-        "SELECT organ_name, organ_name_lat, disease_category FROM organ_preparations"
+        "SELECT id, organ_name, organ_name_lat, disease_category FROM organ_preparations"
     ):
         conn.execute(
-            "INSERT INTO handbook_fts (type, name, content) VALUES (?, ?, ?)",
-            ("organ", row[0], f"{row[1] or ''} {row[2] or ''}"),
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("organ", row[1], f"{row[2] or ''} {row[3] or ''}", row[0]),
         )
         count += 1
 
