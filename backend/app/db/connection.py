@@ -182,6 +182,16 @@ async def init_schema(db: aiosqlite.Connection) -> None:
     """)
     await db.commit()
 
+    # --- Migrations ---
+    # Add disease_system column to therapeutic_index (links conditions to etiology)
+    try:
+        await db.execute(
+            "ALTER TABLE therapeutic_index ADD COLUMN disease_system TEXT"
+        )
+        await db.commit()
+    except Exception:
+        pass  # Column already exists
+
 
 async def close_db() -> None:
     global _db

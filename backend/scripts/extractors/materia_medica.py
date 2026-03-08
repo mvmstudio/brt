@@ -1,12 +1,12 @@
 """
 Materia Medica extractor (pages 140-180).
 Pattern: REMEDY_NAME_LAT (REMEDY_NAME_RUS), then symptoms by organ system.
-~20 remedies, LLM-assisted extraction of organ systems.
+~20 remedies. Pure regex/deterministic parsing — no LLM.
 """
 import json
 import re
 
-from .base import BaseExtractor
+from .base import BaseExtractor, normalize_latin_upper
 
 # Organ system mapping (key -> Russian display name)
 SYSTEM_MAP = {
@@ -32,9 +32,83 @@ SYSTEM_MAP = {
     "modality": "Модальность",
 }
 
+# Reverse map: Russian names -> system key (include common variants from OCR)
+_SECTION_ALIASES: dict[str, str] = {}
+for key, rus_name in SYSTEM_MAP.items():
+    _SECTION_ALIASES[rus_name.lower()] = key
+
+# Additional aliases for OCR variants
+_SECTION_ALIASES.update({
+    "психика": "psyche",
+    "нозологии": "nosologies",
+    "склонности": "tendencies",
+    "голова": "head",
+    "лицо": "face",
+    "глаза": "eyes",
+    "уши": "ears",
+    "зубы": "teeth",
+    "зубы и полость рта": "teeth",
+    "дыхательная система": "respiratory",
+    "органы дыхания": "respiratory",
+    "респираторная система": "respiratory",
+    "сердечно-сосудистая система": "cardiovascular",
+    "сердце и кровообращение": "cardiovascular",
+    "сердце": "cardiovascular",
+    "кровообращение": "cardiovascular",
+    "пищеварительная система": "digestive",
+    "желудочно-кишечный тракт": "digestive",
+    "желудок": "digestive",
+    "жкт": "digestive",
+    "пищеварение": "digestive",
+    "мочеполовая система": "urogenital",
+    "мочевыделительная система": "urogenital",
+    "почки": "urogenital",
+    "мочевая система": "urogenital",
+    "женские проблемы": "female",
+    "у женщин": "female",
+    "женская половая сфера": "female",
+    "мужские проблемы": "male",
+    "у мужчин": "male",
+    "мужская половая сфера": "male",
+    "кожа": "skin",
+    "кожные проявления": "skin",
+    "опорно-двигательная система": "musculoskeletal",
+    "костно-мышечная система": "musculoskeletal",
+    "конечности": "musculoskeletal",
+    "суставы": "musculoskeletal",
+    "нервная система": "nervous",
+    "железы": "glands",
+    "лимфатические узлы": "glands",
+    "лихорадка": "fever",
+    "модальность": "modality",
+    "модальности": "modality",
+})
+
 # Regex for remedy headers: ACONITUM (АКОНИТУМ)
 REMEDY_HEADER_RE = re.compile(
     r'^([A-Z][A-Z ]+?)\s*\(([А-ЯЁ][А-ЯЁа-яё ]+?)\)\s*$'
+)
+
+# Regex for section headers within a remedy block
+# Matches: "Психика.", "Психика:", "Голова:", "Женские проблемы.", etc.
+# Must start at beginning of a logical segment (after newline or period+space)
+SECTION_HEADER_RE = re.compile(
+    r'(?:^|\n)\s*'
+    r'(Психика|Нозологии|Склонности|Голова|Лицо|Глаза|Уши|Зубы(?:\s+и\s+полость\s+рта)?|'
+    r'Дыхательная\s+система|Органы\s+дыхания|Респираторная\s+система|'
+    r'Сердечно-сосудистая\s+система|Сердце(?:\s+и\s+кровообращение)?|Кровообращение|'
+    r'Пищеварительная\s+система|Желудочно-кишечный\s+тракт|Желудок|ЖКТ|Пищеварение|'
+    r'Мочеполовая\s+система|Мочевыделительная\s+система|Почки|Мочевая\s+система|'
+    r'Женские\s+проблемы|У\s+женщин|Женская\s+половая\s+сфера|'
+    r'Мужские\s+проблемы|У\s+мужчин|Мужская\s+половая\s+сфера|'
+    r'Кожа|Кожные\s+проявления|'
+    r'Опорно-двигательная\s+система|Костно-мышечная\s+система|Конечности|Суставы|'
+    r'Нервная\s+система|'
+    r'Железы|Лимфатические\s+узлы|'
+    r'Лихорадка|'
+    r'Модальност[ьи])'
+    r'\s*[.:]\s*',
+    re.IGNORECASE
 )
 
 
@@ -45,17 +119,18 @@ class MateriaMedicaExtractor(BaseExtractor):
     def extract(self) -> dict:
         print("\n=== Materia Medica (pages 140-180) ===")
 
-        # 1. Fetch and concat all pages
+        # 1. Fetch and concat all pages with page numbers
         pages = self.fetch_pages(self.START_PAGE, self.END_PAGE)
-        raw_texts = []
+        page_texts: list[tuple[int, str]] = []
         for p in pages:
             text = self.strip_headers(p["plain_text"] or "")
             if text:
-                raw_texts.append(text)
-        full_text = "\n".join(raw_texts)
+                page_texts.append((p["page_num"], text))
+
+        full_text = "\n".join(t for _, t in page_texts)
 
         # 2. Trim intro text — start from first remedy header
-        first_match = REMEDY_HEADER_RE.search(full_text, re.MULTILINE)
+        first_match = REMEDY_HEADER_RE.search(full_text)
         if first_match:
             full_text = full_text[first_match.start():]
 
@@ -63,44 +138,18 @@ class MateriaMedicaExtractor(BaseExtractor):
         blocks = self._split_into_remedy_blocks(full_text)
         print(f"  Found {len(blocks)} remedy blocks")
 
-        # 4. Process each block with LLM (batch 3-4 at a time)
+        # 4. Parse each block with regex (no LLM)
         all_remedies = []
-        batch_size = 3
-        for i in range(0, len(blocks), batch_size):
-            batch = blocks[i:i + batch_size]
-            batch_names = [b["name_lat"] for b in batch]
-            print(f"  Processing batch: {', '.join(batch_names)}")
-            results = self._extract_batch(batch)
-
-            # Fix LLM name confusion: enforce original block names
-            for j, result in enumerate(results):
-                if j < len(batch):
-                    expected = batch[j]["name_lat"]
-                    if result.get("name_lat", "").upper() != expected.upper():
-                        print(f"    Name fix: LLM returned '{result.get('name_lat')}' but expected '{expected}'")
-                        result["name_lat"] = expected
-                        result["name_rus"] = batch[j]["name_rus"]
-
-            all_remedies.extend(results)
+        for block in blocks:
+            remedy = self._parse_remedy_block(block)
+            all_remedies.append(remedy)
+            sys_count = len(remedy.get("symptoms", []))
+            print(f"  {remedy['name_lat']}: {sys_count} sections")
 
         # 5. Save debug
         self.save_debug("materia_medica", all_remedies)
 
-        # 6. Deduplicate by name_lat (LLM may return same remedy in different batches)
-        seen = {}
-        deduplicated = []
-        for remedy in all_remedies:
-            key = remedy["name_lat"].upper().strip()
-            if key not in seen:
-                seen[key] = remedy
-                deduplicated.append(remedy)
-            else:
-                # Merge symptoms from duplicate
-                existing = seen[key]
-                existing.setdefault("symptoms", []).extend(remedy.get("symptoms", []))
-        all_remedies = deduplicated
-
-        # 7. Insert into DB
+        # 6. Insert into DB
         conn = self.get_db_connection()
         try:
             remedy_count = 0
@@ -115,7 +164,6 @@ class MateriaMedicaExtractor(BaseExtractor):
                 )
                 remedy_id = cursor.lastrowid
                 if remedy_id is None or remedy_id == 0:
-                    # Already existed, fetch its id
                     row = conn.execute(
                         "SELECT id FROM remedies WHERE name_lat = ?", (remedy["name_lat"],)
                     ).fetchone()
@@ -150,7 +198,6 @@ class MateriaMedicaExtractor(BaseExtractor):
         for line in lines:
             match = REMEDY_HEADER_RE.match(line.strip())
             if match:
-                # Save previous block
                 if current_block:
                     blocks.append(current_block)
                 current_block = {
@@ -161,11 +208,10 @@ class MateriaMedicaExtractor(BaseExtractor):
             elif current_block:
                 current_block["text"] += line + "\n"
 
-        # Last block
         if current_block:
             blocks.append(current_block)
 
-        # Trim text for each block — remove therapeutic index intro if it leaked in
+        # Trim — remove therapeutic index intro if it leaked in
         for block in blocks:
             marker = "Терапевтический указатель"
             pos = block["text"].find(marker)
@@ -174,60 +220,55 @@ class MateriaMedicaExtractor(BaseExtractor):
 
         return blocks
 
-    def _extract_batch(self, batch: list[dict]) -> list[dict]:
-        """Use LLM to extract structured symptoms from a batch of remedy blocks."""
-        system_keys = list(SYSTEM_MAP.keys())
-        system_prompt = f"""You are a homeopathic medicine expert extracting structured data from remedy descriptions.
+    def _parse_remedy_block(self, block: dict) -> dict:
+        """Parse a remedy block into structured data using regex for section headers."""
+        name_lat_normalized = normalize_latin_upper(block["name_lat"])
+        text = block["text"].strip()
 
-For each remedy, extract symptoms organized by body system. Use ONLY these system keys:
-{json.dumps(SYSTEM_MAP, ensure_ascii=False, indent=2)}
+        # Find all section headers with their positions
+        sections: list[tuple[str, int, int]] = []  # (system_key, start_of_content, end_of_header_match)
+        for match in SECTION_HEADER_RE.finditer(text):
+            header_text = match.group(1).strip().lower()
+            system_key = _SECTION_ALIASES.get(header_text)
+            if system_key:
+                sections.append((system_key, match.end(), match.start()))
 
-Return JSON:
-{{
-  "remedies": [
-    {{
-      "name_lat": "ACONITUM",
-      "name_rus": "АКОНИТУМ",
-      "summary": "1-2 sentence summary of the remedy",
-      "symptoms": [
-        {{"system": "psyche", "system_name": "Психика", "description": "Full symptom text for this system"}},
-        ...
-      ]
-    }}
-  ]
-}}
+        # Extract symptoms for each section
+        symptoms = []
+        for i, (system_key, content_start, _header_start) in enumerate(sections):
+            # Content ends at the start of the next section header, or end of text
+            if i + 1 < len(sections):
+                content_end = sections[i + 1][2]  # start of next header match
+            else:
+                content_end = len(text)
 
-Rules:
-- Keep symptom descriptions in RUSSIAN, preserve the original text as closely as possible
-- Combine multiline descriptions for the same system into one entry
-- Map Russian section headers to the closest system key:
-  "Психика" → psyche, "Нозологии" → nosologies, "Голова" → head, etc.
-  "Желудочно-кишечный тракт" / "Пищеварительная система" → digestive
-  "Сердце и кровообращение" / "Сердечно-сосудистая система" → cardiovascular
-  "Женские проблемы" / "У женщин" → female
-  "Мужские проблемы" / "У мужчин" → male
-  "Опорно-двигательная система" / "Костно-мышечная" → musculoskeletal
-  "Модальности" → modality, "Лихорадка" → fever, "Склонности" → tendencies
-- If a section doesn't match any system, use the closest one
-- Include ALL symptoms mentioned in the text"""
+            content = text[content_start:content_end].strip()
+            # Clean up: collapse whitespace, remove trailing newlines
+            content = re.sub(r'\s*\n\s*', ' ', content).strip()
+            content = content.rstrip(".,;:-")
 
-        # Build user prompt with all blocks in the batch
-        remedy_names = [f"{b['name_lat']} ({b['name_rus']})" for b in batch]
-        blocks_text = f"IMPORTANT: Extract exactly these {len(batch)} remedies: {', '.join(remedy_names)}\n"
-        blocks_text += "Use EXACTLY these name_lat values in your response.\n"
-        for block in batch:
-            blocks_text += f"\n\n=== {block['name_lat']} ({block['name_rus']}) ===\n{block['text'][:6000]}"
+            if content and len(content) > 5:
+                system_name = SYSTEM_MAP.get(system_key, system_key)
+                symptoms.append({
+                    "system": system_key,
+                    "system_name": system_name,
+                    "description": content,
+                })
 
-        result = self.llm_call(system_prompt, blocks_text.strip(), max_tokens=8192)
+        # Build summary from first ~200 chars of text before first section, or first section
+        summary = ""
+        if sections:
+            pre_section = text[:sections[0][2]].strip()
+            pre_section = re.sub(r'\s*\n\s*', ' ', pre_section).strip()
+            if len(pre_section) > 20:
+                summary = pre_section[:250].rstrip(".,;:- ") + ("..." if len(pre_section) > 250 else "")
+        if not summary and symptoms:
+            summary = symptoms[0]["description"][:250].rstrip(".,;:- ") + "..."
 
-        try:
-            data = json.loads(result)
-            remedies = data.get("remedies", [])
-            return remedies
-        except json.JSONDecodeError as e:
-            print(f"  LLM returned invalid JSON: {e}")
-            # Fallback: create minimal entries
-            return [
-                {"name_lat": b["name_lat"], "name_rus": b["name_rus"], "symptoms": []}
-                for b in batch
-            ]
+        return {
+            "name_lat": name_lat_normalized,
+            "name_rus": block["name_rus"],
+            "summary": summary,
+            "symptoms": symptoms,
+            "source_pages": [],
+        }

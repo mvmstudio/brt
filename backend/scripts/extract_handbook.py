@@ -2,6 +2,7 @@
 """
 Handbook data extraction orchestrator.
 Extracts structured data from OCR text in SQLite → new handbook tables.
+Pure regex/deterministic parsing — no external LLM required.
 
 Usage:
     cd backend
@@ -11,7 +12,6 @@ Sections: therapeutic_index, materia_medica, nosodes, etiology, organ_preparatio
 Default: all
 """
 import argparse
-import json
 import sqlite3
 import sys
 import time
@@ -21,7 +21,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import settings
-from app.services.groq_client import create_groq_client
 from scripts.extractors import (
     TherapeuticIndexExtractor,
     MateriaMedicaExtractor,
@@ -106,7 +105,7 @@ HANDBOOK_SCHEMA = """
 def reset_tables(db_path: str) -> None:
     """Drop and recreate all handbook tables. Existing tables (pages, toc, etc.) untouched."""
     conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA foreign_keys=OFF")
 
     print("Resetting handbook tables...")
     for table in HANDBOOK_TABLES:
@@ -237,22 +236,18 @@ def main():
         print(f"ERROR: Database not found at {db_path}")
         sys.exit(1)
 
-    # Create Groq client
-    print("Creating Groq client...")
-    client = create_groq_client()
-
     start_time = time.time()
 
     # Reset tables
     reset_tables(db_path)
 
-    # Define extractors
+    # Define extractors (no LLM client needed — all parsing is deterministic)
     extractors = {
-        "therapeutic_index": lambda: TherapeuticIndexExtractor(db_path, client, settings.groq_model),
-        "etiology": lambda: EtiologyExtractor(db_path, client, settings.groq_model),
-        "nosodes": lambda: NosodesExtractor(db_path, client, settings.groq_model),
-        "materia_medica": lambda: MateriaMedicaExtractor(db_path, client, settings.groq_model),
-        "organ_preparations": lambda: OrganPreparationsExtractor(db_path, client, settings.groq_model),
+        "therapeutic_index": lambda: TherapeuticIndexExtractor(db_path),
+        "etiology": lambda: EtiologyExtractor(db_path),
+        "nosodes": lambda: NosodesExtractor(db_path),
+        "materia_medica": lambda: MateriaMedicaExtractor(db_path),
+        "organ_preparations": lambda: OrganPreparationsExtractor(db_path),
     }
 
     # Run selected extractors

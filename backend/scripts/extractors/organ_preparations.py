@@ -1,23 +1,30 @@
 """
 Organ Preparations extractor (pages 262-278).
 Bilingual lists: Russian organ name — Latin organ name, grouped by disease category.
-Mixed html/image pages.
+Pure regex parsing — no LLM.
 """
-import json
 import re
 
 from .base import BaseExtractor
 
 
+# Pattern for Latin name with dash prefix: "- Bronchi" or "-Bronchi" or "—  Bronchi"
+LATIN_PREFIX_RE = re.compile(r'^\s*[-–—]\s*([A-Za-z].+)$')
+
+# Category header: ALL CAPS Cyrillic, contains "ЗАБОЛЕВАНИ" or similar disease markers
+CATEGORY_HEADER_RE = re.compile(
+    r'^(ЗАБОЛЕВАНИ[ЯЕИЙ]\s+.+|'
+    r'ПОРАЖЕНИ[ЕЯ]\s+.+|'
+    r'СУСТАВЫ\s+.+|'
+    r'ВИСОЧНО[-–]?.+|'
+    r'НАРУШЕНИ[ЕЯ]\s+.+)$',
+    re.IGNORECASE,
+)
+
+
 class OrganPreparationsExtractor(BaseExtractor):
     START_PAGE = 262
     END_PAGE = 278
-
-    # Pattern for disease category headers (ALL CAPS or mixed)
-    CATEGORY_RE = re.compile(
-        r'^ЗАБОЛЕВАНИ[ЯЕ]\s+(.+?)$|^СУСТАВЫ\s+(.+?)$|^ВИСОЧНО[-–](.+?)$',
-        re.IGNORECASE,
-    )
 
     def extract(self) -> dict:
         print("\n=== Organ Preparations (pages 262-278) ===")
@@ -25,25 +32,18 @@ class OrganPreparationsExtractor(BaseExtractor):
         # 1. Fetch all pages
         pages = self.fetch_pages(self.START_PAGE, self.END_PAGE)
 
-        # Filter pages with text (skip intro page 262 which is all prose)
+        # Skip intro page 262 (all prose)
         data_pages = [p for p in pages if p["plain_text"] and p["page_num"] > 262]
         print(f"  Data pages: {len(data_pages)}")
 
-        # 2. Process ALL pages with LLM in batches (text layout is two-column, not parseable by regex)
-        all_entries = []
-        batch_size = 4
-        for i in range(0, len(data_pages), batch_size):
-            batch = data_pages[i:i + batch_size]
-            page_nums = [p["page_num"] for p in batch]
-            print(f"  Processing pages {page_nums}...")
-            entries = self._parse_pages_llm(batch)
-            all_entries.extend(entries)
-            print(f"    Got {len(entries)} entries")
+        # 2. Parse all pages with regex
+        all_entries = self._parse_all_pages(data_pages)
+        print(f"  Parsed {len(all_entries)} entries via regex")
 
-        # 4. Save debug
+        # 3. Save debug
         self.save_debug("organ_preparations", all_entries)
 
-        # 5. Insert into DB
+        # 4. Insert into DB
         conn = self.get_db_connection()
         try:
             for entry in all_entries:
@@ -58,7 +58,6 @@ class OrganPreparationsExtractor(BaseExtractor):
             count = conn.execute("SELECT COUNT(*) FROM organ_preparations").fetchone()[0]
             print(f"  Inserted {count} records into organ_preparations")
 
-            # Stats by category
             cursor = conn.execute(
                 "SELECT disease_category, COUNT(*) FROM organ_preparations "
                 "GROUP BY disease_category ORDER BY COUNT(*) DESC LIMIT 5"
@@ -72,46 +71,150 @@ class OrganPreparationsExtractor(BaseExtractor):
         finally:
             conn.close()
 
-    def _parse_pages_llm(self, pages: list[dict]) -> list[dict]:
-        """Use LLM to parse organ preparations from OCR text (both html and image pages)."""
-        texts = []
-        for p in pages:
-            text = self.strip_headers(p["plain_text"] or "")
-            if text:
-                texts.append(f"--- Page {p['page_num']} ---\n{text}")
+    def _parse_all_pages(self, pages: list[dict]) -> list[dict]:
+        """Parse organ preparations from all pages."""
+        all_entries: list[dict] = []
+        current_category = None
 
-        full_text = "\n".join(texts)
-        if not full_text.strip():
-            return []
+        for page in pages:
+            text = self.strip_headers(page["plain_text"] or "")
+            if not text:
+                continue
 
-        system_prompt = """You are a medical data extraction expert. You will receive OCR text from pages listing potentiated organ preparations (потенцированные органные препараты).
+            page_num = page["page_num"]
+            lines = text.split("\n")
 
-The text layout is two-column: Russian organ names on the left, Latin organ names on the right, separated by dashes (- or —). They are grouped under disease category headers (ЗАБОЛЕВАНИЯ ..., СУСТАВЫ ..., etc.).
+            # Collect Russian names and Latin names for this page under current category
+            russian_names: list[str] = []
+            latin_names: list[str] = []
 
-IMPORTANT: The two columns may appear mixed in the OCR text. Russian names and Latin names alternate or are in separate blocks. Match them correctly.
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
 
-Extract ALL organ entries.
+                # Check for category header
+                cat_match = CATEGORY_HEADER_RE.match(stripped)
+                if cat_match:
+                    # Flush pending pairs before changing category
+                    entries = self._pair_names(russian_names, latin_names, current_category, page_num)
+                    all_entries.extend(entries)
+                    russian_names = []
+                    latin_names = []
 
-Return JSON:
-{
-  "entries": [
-    {"organ_name": "Бронхи", "organ_name_lat": "Bronchi", "disease_category": "Заболевания бронхолегочной системы", "source_page": 264},
-    ...
-  ]
-}
+                    # Clean up category name
+                    current_category = self._clean_category(cat_match.group(1))
+                    continue
 
-Rules:
-- Fix obvious OCR errors in Latin names
-- Keep disease category names in Russian, preserve original case
-- Include source_page number from the "--- Page N ---" markers
-- Include ALL entries, even if you're not 100% sure about the pairing
-- Skip entries that are clearly section headers or footnotes, not organ preparations"""
+                # Check for Latin name (with dash prefix)
+                latin_match = LATIN_PREFIX_RE.match(stripped)
+                if latin_match:
+                    lat_name = latin_match.group(1).strip().rstrip(".,;:")
+                    if lat_name and len(lat_name) > 1:
+                        latin_names.append(lat_name)
+                    continue
 
-        result = self.llm_call(system_prompt, full_text, max_tokens=8192)
+                # Check for mixed line: "Russian name  - Latin name" or "Russian - Latin"
+                mixed = self._try_mixed_line(stripped)
+                if mixed:
+                    rus, lat = mixed
+                    russian_names.append(rus)
+                    latin_names.append(lat)
+                    continue
 
-        try:
-            data = json.loads(result)
-            return data.get("entries", [])
-        except json.JSONDecodeError as e:
-            print(f"  LLM returned invalid JSON: {e}")
-            return []
+                # Check if it's a Russian organ name (starts with Cyrillic, no more than a few words)
+                if self._is_russian_organ_name(stripped):
+                    russian_names.append(stripped)
+                    continue
+
+                # Skip unrecognized lines (page numbers, headers, footnotes)
+
+            # Flush remaining pairs for this page
+            entries = self._pair_names(russian_names, latin_names, current_category, page_num)
+            all_entries.extend(entries)
+
+        return all_entries
+
+    def _try_mixed_line(self, line: str) -> tuple[str, str] | None:
+        """Try to split a line into Russian name + Latin name separated by dash."""
+        # Pattern: "Бронхи - Bronchi" or "Бронхи — Bronchi"
+        m = re.match(r'^([А-ЯЁа-яё][\w\s()]+?)\s+[-–—]\s*([A-Za-z].+)$', line)
+        if m:
+            return (m.group(1).strip(), m.group(2).strip().rstrip(".,;:"))
+        return None
+
+    def _is_russian_organ_name(self, line: str) -> bool:
+        """Check if line looks like a Russian organ name (not a header, number, etc.)."""
+        if not line:
+            return False
+        # Must start with Cyrillic
+        if not re.match(r'^[А-ЯЁа-яё]', line):
+            return False
+        # Should not be all caps (that's a category header)
+        if line == line.upper() and len(line) > 15:
+            return False
+        # Should not be a table header ("Продолжение таблицы", "Окончание")
+        lower = line.lower()
+        if any(kw in lower for kw in ["продолжение", "окончание", "таблиц", "кодовый"]):
+            return False
+        # Should not be too long (organ names are usually < 80 chars)
+        if len(line) > 100:
+            return False
+        # Should not contain mostly digits
+        if sum(c.isdigit() for c in line) > len(line) * 0.3:
+            return False
+        return True
+
+    def _pair_names(
+        self,
+        russian: list[str],
+        latin: list[str],
+        category: str | None,
+        page_num: int,
+    ) -> list[dict]:
+        """Pair Russian and Latin names by position. Handle mismatches gracefully."""
+        entries = []
+        max_len = max(len(russian), len(latin))
+
+        for i in range(max_len):
+            rus = russian[i] if i < len(russian) else None
+            lat = latin[i] if i < len(latin) else None
+
+            if rus:
+                entries.append({
+                    "organ_name": rus,
+                    "organ_name_lat": lat or "",
+                    "disease_category": category,
+                    "source_page": page_num,
+                })
+            elif lat:
+                # Latin name without Russian pair — store as-is
+                entries.append({
+                    "organ_name": lat,  # Use Latin as primary
+                    "organ_name_lat": lat,
+                    "disease_category": category,
+                    "source_page": page_num,
+                })
+
+        return entries
+
+    @staticmethod
+    def _clean_category(raw: str) -> str:
+        """Clean up category name from OCR artifacts."""
+        # Collapse whitespace
+        result = re.sub(r'\s+', ' ', raw).strip()
+        # Fix common OCR issues
+        result = result.replace("!!", "II").replace("!!.", "II.")
+        # Title case for consistency
+        if result == result.upper():
+            result = result.capitalize()
+            # But keep "ЗАБОЛЕВАНИЯ" format nicely
+            result = re.sub(
+                r'\b(органов|системы|половых|мужских|женских|верхних|нижних|'
+                r'бронхолегочной|сердечно-сосудистой|мочеполовой|нервной|'
+                r'опорно-двигательной|эндокринной|пищеварительной)\b',
+                lambda m: m.group(0).lower(),
+                result,
+                flags=re.IGNORECASE,
+            )
+        return result

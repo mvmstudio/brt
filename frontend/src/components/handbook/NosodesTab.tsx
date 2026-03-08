@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
 import { api, type Nosode, type EntityType } from "@/lib/api"
-import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
 import { RelationsSection } from "./RelationsSection"
 
@@ -18,9 +17,10 @@ interface NosodesTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
   onNavigate?: (type: string, entityId: number) => void
+  onRegisterRefresh?: (fn: () => Promise<void>) => void
 }
 
-export function NosodesTab({ initialExpandedId, onAuthRequired, onNavigate }: NosodesTabProps) {
+export function NosodesTab({ initialExpandedId, onAuthRequired, onNavigate, onRegisterRefresh }: NosodesTabProps) {
   const [nosodes, setNosodes] = useState<Nosode[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCat, setSelectedCat] = useState<string>("")
@@ -67,6 +67,10 @@ export function NosodesTab({ initialExpandedId, onAuthRequired, onNavigate }: No
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    onRegisterRefresh?.(() => load(selectedCat || undefined))
+  }, [onRegisterRefresh, selectedCat])
 
   const handleCatChange = (cat: string) => {
     setSelectedCat(cat)
@@ -140,7 +144,6 @@ export function NosodesTab({ initialExpandedId, onAuthRequired, onNavigate }: No
           </p>
           {filtered.map((n) => {
             const isExpanded = expandedIds.has(n.id)
-            const hasExtra = n.description || (n.remedies_list && n.remedies_list.length > 0)
             return (
               <div
                 key={n.id}
@@ -153,11 +156,11 @@ export function NosodesTab({ initialExpandedId, onAuthRequired, onNavigate }: No
                 }}
               >
                 <div
-                  onClick={() => hasExtra && toggle(n.id)}
+                  onClick={() => toggle(n.id)}
                   className="w-full flex items-center gap-3 p-2.5 text-left cursor-pointer"
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); hasExtra && toggle(n.id) } }}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(n.id) } }}
                 >
                   {n.number && (
                     <span
@@ -187,41 +190,15 @@ export function NosodesTab({ initialExpandedId, onAuthRequired, onNavigate }: No
                         {CATEGORY_LABELS[n.category]?.split(" ")[0] || n.category}
                       </span>
                     )}
-                    {hasExtra && (isExpanded
+                    {isExpanded
                       ? <ChevronUp size={14} strokeWidth={1.25} style={{ color: "var(--text-muted)" }} />
                       : <ChevronDown size={14} strokeWidth={1.25} style={{ color: "var(--text-muted)" }} />
-                    )}
+                    }
                   </div>
                 </div>
 
-                {isExpanded && hasExtra && (
+                {isExpanded && (
                   <div className="px-3 pb-3 border-t" style={{ borderColor: "var(--border-subtle)" }}>
-                    {n.description && (
-                      <p className="text-xs leading-relaxed mt-2 mb-2" style={{ color: "var(--text-secondary)" }}>
-                        {n.description}
-                      </p>
-                    )}
-                    {n.remedies_list && n.remedies_list.length > 0 && (
-                      <>
-                        <div className="flex items-center gap-1 mb-1.5">
-                          <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
-                            Препараты ({n.remedies_list.length})
-                          </span>
-                          <SourceBadge source={n.content_source} />
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {n.remedies_list.map((name, i) => (
-                            <span
-                              key={i}
-                              className="text-xs px-2 py-1 rounded-full"
-                              style={{ background: "var(--accent-glow)", color: "var(--accent-warm)" }}
-                            >
-                              {name}
-                            </span>
-                          ))}
-                        </div>
-                      </>
-                    )}
                     <RelationsSection
                       entityType="nosode"
                       entityId={n.id}

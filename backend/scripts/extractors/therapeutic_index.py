@@ -1,11 +1,12 @@
 """
 Therapeutic Index extractor (pages 180-203).
 Pattern: disease name (cyrillic line) followed by comma-separated Latin remedy names.
+Pure regex parsing with OCR normalization — no LLM.
 """
 import json
 import re
 
-from .base import BaseExtractor
+from .base import BaseExtractor, normalize_remedy_name
 
 
 class TherapeuticIndexExtractor(BaseExtractor):
@@ -36,8 +37,11 @@ class TherapeuticIndexExtractor(BaseExtractor):
         entries = self._parse_entries(full_text)
         print(f"  Parsed {len(entries)} entries via regex")
 
-        # 4. LLM verification to fix OCR artifacts in remedy names
-        entries = self._verify_with_llm(entries)
+        # 4. Apply deterministic OCR normalization (replaces LLM verification)
+        for entry in entries:
+            entry["remedies"] = [normalize_remedy_name(r) for r in entry["remedies"]]
+            # Remove empty entries after normalization
+            entry["remedies"] = [r for r in entry["remedies"] if r and len(r) > 1]
 
         # 5. Save debug
         self.save_debug("therapeutic_index", entries)
@@ -143,61 +147,3 @@ class TherapeuticIndexExtractor(BaseExtractor):
             remedies.append(cleaned)
         return remedies
 
-    def _verify_with_llm(self, entries: list[dict]) -> list[dict]:
-        """Use LLM to verify and fix OCR artifacts in the parsed data."""
-        print("  Verifying with LLM...")
-
-        # Build concise representation for LLM
-        compact = []
-        for e in entries:
-            compact.append({
-                "c": e["condition"],
-                "r": e["remedies"][:5],  # first 5 for context
-                "n": len(e["remedies"]),
-            })
-
-        system_prompt = """You are a homeopathic medicine expert verifying OCR-extracted data.
-You will receive a list of conditions with sample remedies from a therapeutic index.
-
-Your task:
-1. Fix obvious OCR errors in condition names (e.g., "Аденоиды" is correct, "Аденонды" would be a typo)
-2. Fix obvious OCR errors in remedy names (e.g., "Belladonna" not "Belladoma")
-3. Identify entries that seem to be continuation of previous entries (not new conditions)
-4. DO NOT add new entries or remedies — only fix existing OCR artifacts
-
-Return JSON: {"fixes": [{"index": 0, "condition_fixed": "...", "note": "..."}], "merge": [{"from": 5, "into": 4, "note": "continuation"}]}
-If no fixes needed, return {"fixes": [], "merge": []}"""
-
-        user_prompt = json.dumps(compact, ensure_ascii=False)
-
-        try:
-            result = self.llm_call(system_prompt, user_prompt, max_tokens=4096)
-            data = json.loads(result)
-
-            # Apply fixes
-            fixes_applied = 0
-            for fix in data.get("fixes", []):
-                idx = fix["index"]
-                if 0 <= idx < len(entries) and "condition_fixed" in fix:
-                    old = entries[idx]["condition"]
-                    entries[idx]["condition"] = fix["condition_fixed"]
-                    print(f"    Fixed: '{old}' -> '{fix['condition_fixed']}'")
-                    fixes_applied += 1
-
-            # Apply merges (reverse order to preserve indices)
-            merges = sorted(data.get("merge", []), key=lambda m: m["from"], reverse=True)
-            for merge in merges:
-                from_idx = merge["from"]
-                into_idx = merge["into"]
-                if 0 <= from_idx < len(entries) and 0 <= into_idx < len(entries):
-                    entries[into_idx]["remedies"].extend(entries[from_idx]["remedies"])
-                    entries.pop(from_idx)
-                    print(f"    Merged entry {from_idx} into {into_idx}")
-                    fixes_applied += 1
-
-            print(f"  LLM verification: {fixes_applied} fixes applied")
-
-        except Exception as e:
-            print(f"  LLM verification failed ({e}), using raw parsed data")
-
-        return entries

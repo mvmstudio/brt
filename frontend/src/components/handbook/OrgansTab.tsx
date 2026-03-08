@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
 import { api, type OrganPrep, type EntityType } from "@/lib/api"
-import { SourceBadge } from "./SourceBadge"
 import { FavoriteButton } from "./FavoriteButton"
 import { RelationsSection } from "./RelationsSection"
 
@@ -11,9 +10,10 @@ interface OrgansTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
   onNavigate?: (type: string, entityId: number) => void
+  onRegisterRefresh?: (fn: () => Promise<void>) => void
 }
 
-export function OrgansTab({ initialExpandedId, onAuthRequired, onNavigate }: OrgansTabProps) {
+export function OrgansTab({ initialExpandedId, onAuthRequired, onNavigate, onRegisterRefresh }: OrgansTabProps) {
   const [entries, setEntries] = useState<OrganPrep[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCat, setSelectedCat] = useState("")
@@ -60,6 +60,10 @@ export function OrgansTab({ initialExpandedId, onAuthRequired, onNavigate }: Org
   }
 
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    onRegisterRefresh?.(() => load(selectedCat || undefined))
+  }, [onRegisterRefresh, selectedCat])
 
   const handleCatChange = (cat: string) => {
     setSelectedCat(cat)
@@ -138,7 +142,6 @@ export function OrgansTab({ initialExpandedId, onAuthRequired, onNavigate }: Org
               </h3>
               {items.map((e) => {
                 const isExpanded = expandedIds.has(e.id)
-                const hasExtra = e.description || (e.remedies_list && e.remedies_list.length > 0)
                 return (
                   <div
                     key={e.id}
@@ -151,11 +154,11 @@ export function OrgansTab({ initialExpandedId, onAuthRequired, onNavigate }: Org
                     }}
                   >
                     <div
-                      onClick={() => hasExtra && toggle(e.id)}
+                      onClick={() => toggle(e.id)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-left cursor-pointer"
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); hasExtra && toggle(e.id) } }}
+                      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(e.id) } }}
                     >
                       <div className="min-w-0 flex-1">
                         <span className="text-sm" style={{ color: "var(--text-primary)" }}>
@@ -169,41 +172,15 @@ export function OrgansTab({ initialExpandedId, onAuthRequired, onNavigate }: Org
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <FavoriteButton entityType="organ" entityId={e.id} onAuthRequired={onAuthRequired} />
-                        {hasExtra && (isExpanded
+                        {isExpanded
                           ? <ChevronUp size={14} strokeWidth={1.25} style={{ color: "var(--text-muted)" }} />
                           : <ChevronDown size={14} strokeWidth={1.25} style={{ color: "var(--text-muted)" }} />
-                        )}
+                        }
                       </div>
                     </div>
 
-                    {isExpanded && hasExtra && (
+                    {isExpanded && (
                       <div className="px-3 pb-3 border-t" style={{ borderColor: "var(--border-subtle)" }}>
-                        {e.description && (
-                          <p className="text-xs leading-relaxed mt-2 mb-2" style={{ color: "var(--text-secondary)" }}>
-                            {e.description}
-                          </p>
-                        )}
-                        {e.remedies_list && e.remedies_list.length > 0 && (
-                          <>
-                            <div className="flex items-center gap-1 mb-1.5">
-                              <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
-                                Препараты ({e.remedies_list.length})
-                              </span>
-                              <SourceBadge source={e.content_source} />
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {e.remedies_list.map((name, i) => (
-                                <span
-                                  key={i}
-                                  className="text-xs px-2 py-1 rounded-full"
-                                  style={{ background: "var(--accent-glow)", color: "var(--accent-warm)" }}
-                                >
-                                  {name}
-                                </span>
-                              ))}
-                            </div>
-                          </>
-                        )}
                         <RelationsSection
                           entityType="organ"
                           entityId={e.id}

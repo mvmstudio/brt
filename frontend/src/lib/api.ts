@@ -89,8 +89,6 @@ export interface Condition {
   condition_name: string
   remedies: string[]
   source_page: number | null
-  description: string | null
-  content_source: string | null
 }
 
 export interface ConditionDetail extends Condition {
@@ -107,7 +105,6 @@ export interface Remedy {
   name_lat: string
   name_rus: string | null
   summary: string | null
-  content_source?: string | null
 }
 
 export interface RemedySymptom {
@@ -129,9 +126,6 @@ export interface Nosode {
   name_rus: string | null
   category: string | null
   source_page: number | null
-  description: string | null
-  content_source: string | null
-  remedies_list: string[] | null
 }
 
 export interface EtiologyEntry {
@@ -141,9 +135,6 @@ export interface EtiologyEntry {
   agent_name: string
   agent_name_rus: string | null
   source_page: number | null
-  description: string | null
-  content_source: string | null
-  remedies_list: string[] | null
 }
 
 export interface OrganPrep {
@@ -153,9 +144,6 @@ export interface OrganPrep {
   organ_name_lat: string | null
   manufacturer: string | null
   source_page: number | null
-  description: string | null
-  content_source: string | null
-  remedies_list: string[] | null
 }
 
 // ─── Auth types ────────────────────────────────

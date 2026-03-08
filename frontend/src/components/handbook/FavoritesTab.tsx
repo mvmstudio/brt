@@ -19,9 +19,10 @@ const TYPE_ORDER = ["condition", "remedy", "nosode", "etiology", "organ"]
 interface FavoritesTabProps {
   onNavigate?: (type: string, entityId: number) => void
   onAuthRequired?: () => void
+  onRegisterRefresh?: (fn: () => Promise<void>) => void
 }
 
-export function FavoritesTab({ onNavigate, onAuthRequired }: FavoritesTabProps) {
+export function FavoritesTab({ onNavigate, onAuthRequired, onRegisterRefresh }: FavoritesTabProps) {
   const token = useAuthStore((s) => s.token)
   const [items, setItems] = useState<FavoriteItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,6 +48,10 @@ export function FavoritesTab({ onNavigate, onAuthRequired }: FavoritesTabProps) 
   useEffect(() => {
     loadFavorites()
   }, [loadFavorites])
+
+  useEffect(() => {
+    onRegisterRefresh?.(loadFavorites)
+  }, [onRegisterRefresh, loadFavorites])
 
   if (!token) {
     return (

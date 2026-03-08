@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { ArrowLeft, User, LogOut, Search, Stethoscope, Pill, Bug, Microscope, Heart, Star } from "lucide-react"
 import Link from "next/link"
 import { useReaderStore } from "@/stores/reader"
@@ -14,6 +14,7 @@ import { NosodesTab } from "@/components/handbook/NosodesTab"
 import { EtiologyTab } from "@/components/handbook/EtiologyTab"
 import { OrgansTab } from "@/components/handbook/OrgansTab"
 import { FavoritesTab } from "@/components/handbook/FavoritesTab"
+import PullToRefresh from "@/components/ui/PullToRefresh"
 
 const TABS = [
   { id: "search", label: "Поиск", icon: Search },
@@ -79,6 +80,20 @@ export default function HandbookPage() {
     setHighlightedId(entityId)
     setActiveTab(tab)
   }, [])
+
+  // PTR: each tab registers its refresh function
+  const refreshFns = useRef<Record<string, () => Promise<void>>>({})
+
+  const makeRegisterRefresh = useCallback((tabId: string) => {
+    return (fn: () => Promise<void>) => {
+      refreshFns.current[tabId] = fn
+    }
+  }, [])
+
+  const handleRefresh = useCallback(async () => {
+    const fn = refreshFns.current[activeTab]
+    if (fn) await fn()
+  }, [activeTab])
 
   return (
     <div id="handbook-root" className="flex flex-col h-dvh" style={{ background: "var(--bg-primary)" }}>
@@ -148,13 +163,14 @@ export default function HandbookPage() {
       </header>
 
       {/* Content */}
-      <main className="flex-1 overflow-y-auto">
+      <PullToRefresh onRefresh={handleRefresh} className="flex-1 overflow-y-auto">
         {activeTab === "search" && <HandbookSearch onNavigate={handleSearchNavigate} />}
         {activeTab === "conditions" && (
           <ConditionsTab
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
             onNavigate={handleSearchNavigate}
+            onRegisterRefresh={makeRegisterRefresh("conditions")}
           />
         )}
         {activeTab === "remedies" && (
@@ -162,6 +178,7 @@ export default function HandbookPage() {
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
             onNavigate={handleSearchNavigate}
+            onRegisterRefresh={makeRegisterRefresh("remedies")}
           />
         )}
         {activeTab === "nosodes" && (
@@ -169,6 +186,7 @@ export default function HandbookPage() {
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
             onNavigate={handleSearchNavigate}
+            onRegisterRefresh={makeRegisterRefresh("nosodes")}
           />
         )}
         {activeTab === "etiology" && (
@@ -176,6 +194,7 @@ export default function HandbookPage() {
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
             onNavigate={handleSearchNavigate}
+            onRegisterRefresh={makeRegisterRefresh("etiology")}
           />
         )}
         {activeTab === "organs" && (
@@ -183,15 +202,17 @@ export default function HandbookPage() {
             initialExpandedId={highlightedId}
             onAuthRequired={handleAuthRequired}
             onNavigate={handleSearchNavigate}
+            onRegisterRefresh={makeRegisterRefresh("organs")}
           />
         )}
         {activeTab === "favorites" && (
           <FavoritesTab
             onNavigate={handleFavoritesNavigate}
             onAuthRequired={handleAuthRequired}
+            onRegisterRefresh={makeRegisterRefresh("favorites")}
           />
         )}
-      </main>
+      </PullToRefresh>
 
       {/* Auth Bottom Sheet */}
       <AuthSheet open={authOpen} onClose={() => setAuthOpen(false)} />

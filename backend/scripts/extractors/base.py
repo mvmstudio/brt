@@ -1,15 +1,109 @@
 """
-Base extractor with shared logic: SQLite reads, Groq LLM calls, rate limiting, debug output.
+Base extractor with shared logic: SQLite reads, OCR normalization, debug output.
+No external LLM dependencies — all parsing is deterministic.
 """
 import json
 import re
 import sqlite3
-import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+
+# Deterministic OCR fixes for common misreads in Latin remedy names
+OCR_FIXES: dict[str, str] = {
+    # Capital I vs lowercase l confusion
+    "lodum": "Iodum",
+    "lris": "Iris",
+    "lgnatia": "Ignatia",
+    # Hyphenation artifacts
+    "Lycopodi- urn": "Lycopodium",
+    "Lycopodi-urn": "Lycopodium",
+    "Lycopodi- um": "Lycopodium",
+    "Lycopodi-um": "Lycopodium",
+    # OCR letter substitutions
+    "Mezereunr": "Mezereum",
+    "Mezereunn": "Mezereum",
+    "Stafysagria": "Staphysagria",
+    "Staphisagria": "Staphysagria",
+    "Stramoniuni": "Stramonium",
+    "Stramoniurn": "Stramonium",
+    # Cyrillic→Latin confusion
+    "Allium сера": "Allium cepa",
+    "Сера": "Sulfur",
+    "Sulphur": "Sulfur",
+    # Common remedy misspellings from OCR
+    "Bryonla": "Bryonia",
+    "Belladona": "Belladonna",
+    "Calсarea": "Calcarea",
+    "Cаlcarea": "Calcarea",
+    "Nux vomlca": "Nux vomica",
+    "Nux vomiса": "Nux vomica",
+    "Arsenicum аlbum": "Arsenicum album",
+    "Phosphonis": "Phosphorus",
+    "Phosphorus": "Phosphorus",
+    "Caustlcum": "Causticum",
+    "Mercunus": "Mercurius",
+    "Рulsatilla": "Pulsatilla",
+    "Тhuja": "Thuja",
+    "Нepar sulphuris": "Hepar sulphuris",
+    "Lасhesis": "Lachesis",
+    "Chamomila": "Chamomilla",
+    "Сhamomilla": "Chamomilla",
+    "Gelsemiuni": "Gelsemium",
+    "Gelserniurn": "Gelsemium",
+    "Gelserniurn": "Gelsemium",
+    "Siliсea": "Silicea",
+    "Natrum muriaticum": "Natrium muriaticum",
+    "Natrum mur.": "Natrium muriaticum",
+    "Nat. mur.": "Natrium muriaticum",
+    "Ferrum phos.": "Ferrum phosphoricum",
+    "Calc. carb.": "Calcarea carbonica",
+    "Kali bichrom.": "Kali bichromicum",
+    "Kali carb.": "Kali carbonicum",
+    "Aurum met.": "Aurum metallicum",
+    "Arg. nitr.": "Argentum nitricum",
+    "Merc. sol.": "Mercurius solubilis",
+}
+
+# Build a regex for fast matching — sort by length descending so longer matches first
+_OCR_FIXES_PATTERN = re.compile(
+    "|".join(re.escape(k) for k in sorted(OCR_FIXES.keys(), key=len, reverse=True))
+)
+
+
+def normalize_remedy_name(name: str) -> str:
+    """
+    Normalize a remedy name: apply OCR fixes, fix casing, strip extra whitespace.
+    Returns the canonical form.
+    """
+    if not name:
+        return name
+
+    # Apply OCR fixes
+    result = _OCR_FIXES_PATTERN.sub(lambda m: OCR_FIXES[m.group(0)], name)
+
+    # Collapse multiple spaces
+    result = re.sub(r"\s+", " ", result).strip()
+
+    # Remove trailing punctuation artifacts
+    result = result.rstrip(".,;:-")
+
+    return result
+
+
+def normalize_latin_upper(name: str) -> str:
+    """Normalize an ALL-CAPS Latin name to Title Case for matching."""
+    if not name:
+        return name
+    # "ACONITUM" → "Aconitum", "NUX VOMICA" → "Nux vomica"
+    parts = name.strip().split()
+    if not parts:
+        return name
+    result = parts[0].capitalize()
+    if len(parts) > 1:
+        result += " " + " ".join(p.lower() for p in parts[1:])
+    return normalize_remedy_name(result)
 
 
 class BaseExtractor(ABC):
@@ -24,13 +118,10 @@ class BaseExtractor(ABC):
         r"^\d+\s*$",  # standalone page numbers
     ]
 
-    def __init__(self, db_path: str, groq_client: OpenAI, model: str):
+    def __init__(self, db_path: str):
         self.db_path = db_path
-        self.client = groq_client
-        self.model = model
         self.debug_dir = Path(db_path).parent / "extraction_debug"
         self.debug_dir.mkdir(parents=True, exist_ok=True)
-        self._last_llm_call = 0.0
 
     def fetch_pages(self, start: int, end: int) -> list[dict]:
         """Read pages from SQLite (sync, script is one-shot)."""
@@ -56,71 +147,8 @@ class BaseExtractor(ABC):
             if any(re.match(p, stripped, re.IGNORECASE) for p in self.HEADER_PATTERNS):
                 continue
             cleaned.append(line)
-        # Remove leading/trailing blank lines
         result = "\n".join(cleaned).strip()
         return result
-
-    def llm_call(self, system: str, user: str, max_tokens: int = 4096) -> str:
-        """Groq API call with rate limiting and retry on 429."""
-        # Rate limiting: 3 sec between calls
-        elapsed = time.time() - self._last_llm_call
-        if elapsed < 3.0:
-            time.sleep(3.0 - elapsed)
-
-        backoff = 10.0
-        for attempt in range(4):
-            try:
-                self._last_llm_call = time.time()
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    max_tokens=max_tokens,
-                    temperature=0.1,
-                    response_format={"type": "json_object"},
-                )
-                return response.choices[0].message.content or "{}"
-            except Exception as e:
-                error_str = str(e)
-                if "429" in error_str or "rate" in error_str.lower():
-                    print(f"  Rate limited (attempt {attempt + 1}/4), waiting {backoff}s...")
-                    time.sleep(backoff)
-                    backoff *= 2
-                    continue
-                raise
-        raise RuntimeError("LLM call failed after 4 retries (rate limit)")
-
-    def llm_call_text(self, system: str, user: str, max_tokens: int = 4096) -> str:
-        """Groq API call returning plain text (no JSON mode)."""
-        elapsed = time.time() - self._last_llm_call
-        if elapsed < 3.0:
-            time.sleep(3.0 - elapsed)
-
-        backoff = 10.0
-        for attempt in range(4):
-            try:
-                self._last_llm_call = time.time()
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    max_tokens=max_tokens,
-                    temperature=0.1,
-                )
-                return response.choices[0].message.content or ""
-            except Exception as e:
-                error_str = str(e)
-                if "429" in error_str or "rate" in error_str.lower():
-                    print(f"  Rate limited (attempt {attempt + 1}/4), waiting {backoff}s...")
-                    time.sleep(backoff)
-                    backoff *= 2
-                    continue
-                raise
-        raise RuntimeError("LLM call failed after 4 retries (rate limit)")
 
     def save_debug(self, name: str, data: Any) -> None:
         """Save debug JSON to extraction_debug/ directory."""
@@ -148,7 +176,6 @@ class BaseExtractor(ABC):
         print(f"\n  Preview ({table}, first {limit}):")
         for row in rows:
             record = dict(zip(cols, row))
-            # Truncate long values
             for k, v in record.items():
                 if isinstance(v, str) and len(v) > 120:
                     record[k] = v[:120] + "..."

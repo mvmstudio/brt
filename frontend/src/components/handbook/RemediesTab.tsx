@@ -10,9 +10,10 @@ interface RemediesTabProps {
   initialExpandedId?: number | null
   onAuthRequired?: () => void
   onNavigate?: (type: string, entityId: number) => void
+  onRegisterRefresh?: (fn: () => Promise<void>) => void
 }
 
-export function RemediesTab({ initialExpandedId, onAuthRequired, onNavigate }: RemediesTabProps) {
+export function RemediesTab({ initialExpandedId, onAuthRequired, onNavigate, onRegisterRefresh }: RemediesTabProps) {
   const [remedies, setRemedies] = useState<Remedy[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -39,6 +40,10 @@ export function RemediesTab({ initialExpandedId, onAuthRequired, onNavigate }: R
       }
     })
   }, [])
+
+  useEffect(() => {
+    onRegisterRefresh?.(loadRemedies)
+  }, [onRegisterRefresh, loadRemedies])
 
   useEffect(() => {
     if (initialExpandedId != null) {
@@ -187,13 +192,14 @@ export function RemediesTab({ initialExpandedId, onAuthRequired, onNavigate }: R
             </h3>
             <div className="flex flex-wrap gap-1.5">
               {detail.related_conditions.map((c) => (
-                <span
+                <button
                   key={c.id}
-                  className="text-xs px-2 py-1 rounded-full"
-                  style={{ background: "var(--accent-glow)", color: "var(--accent-warm)" }}
+                  onClick={() => onNavigate?.("condition", c.id)}
+                  className="text-xs px-2 py-1 rounded-full transition-opacity hover:opacity-80"
+                  style={{ background: "rgba(74, 144, 217, 0.15)", color: "#4A90D9" }}
                 >
                   {c.condition_name}
-                </span>
+                </button>
               ))}
             </div>
           </div>

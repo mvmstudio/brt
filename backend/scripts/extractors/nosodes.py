@@ -1,9 +1,9 @@
 """
 Nosodes extractor (pages 220-223, Table 3).
 Numbered list of nosodes with Latin/Russian names and category codes.
-OCR text from image pages — use LLM to structure.
+OCR format: three-line entries (number → Latin name → Russian name).
+Pure regex parsing — no LLM.
 """
-import json
 import re
 
 from .base import BaseExtractor
@@ -18,6 +18,12 @@ CATEGORY_MAP = {
     "F": "radionuclides",
 }
 
+# Lines to skip (table headers, page markers)
+SKIP_KEYWORDS = [
+    "Продолжение", "Окончание", "Кодовый", "Наименование",
+    "Список этиологических", "Таблица 3",
+]
+
 
 class NosodesExtractor(BaseExtractor):
     START_PAGE = 220
@@ -28,21 +34,24 @@ class NosodesExtractor(BaseExtractor):
 
         # 1. Fetch pages
         pages = self.fetch_pages(self.START_PAGE, self.END_PAGE)
-        texts = []
+        page_texts: list[tuple[int, str]] = []
         for p in pages:
             text = self.strip_headers(p["plain_text"] or "")
             if text:
-                texts.append(text)
-        full_text = "\n".join(texts)
+                page_texts.append((p["page_num"], text))
 
-        # 2. Trim to start from "Список этиологических нозодов" or first numbered entry
+        full_text = "\n".join(t for _, t in page_texts)
+
+        # 2. Trim to start from Table 3
         marker = full_text.find("Список этиологических нозодов")
+        if marker < 0:
+            marker = full_text.find("Таблица 3")
         if marker > 0:
             full_text = full_text[marker:]
 
-        # 3. Use LLM to parse the messy OCR table
-        entries = self._parse_with_llm(full_text)
-        print(f"  Parsed {len(entries)} entries via LLM")
+        # 3. Parse with regex
+        entries = self._parse_entries(full_text)
+        print(f"  Parsed {len(entries)} entries via regex")
 
         # 4. Save debug
         self.save_debug("nosodes", entries)
@@ -61,7 +70,6 @@ class NosodesExtractor(BaseExtractor):
             count = conn.execute("SELECT COUNT(*) FROM nosodes").fetchone()[0]
             print(f"  Inserted {count} records into nosodes")
 
-            # Stats by category
             cursor = conn.execute(
                 "SELECT category, COUNT(*) FROM nosodes GROUP BY category ORDER BY COUNT(*) DESC"
             )
@@ -74,46 +82,128 @@ class NosodesExtractor(BaseExtractor):
         finally:
             conn.close()
 
-    def _parse_with_llm(self, text: str) -> list[dict]:
-        """Use LLM to extract structured nosode entries from OCR table text."""
-        system_prompt = """You are a medical data extraction expert. You will receive OCR text from a table of nosodes (homeopathic preparations from disease agents).
+    def _parse_entries(self, text: str) -> list[dict]:
+        """Parse nosode entries from alternating Latin → Russian line pairs.
 
-The table has these columns:
-- Code number (integer, 1-166+)
-- Latin name of nosode
-- Russian name/description
+        Note: strip_headers() removes standalone numbers (page numbers),
+        which also removes entry numbers. So we work with numberless pairs
+        and auto-increment the number.
+        """
+        entries: list[dict] = []
+        current_category = None
+        lines = text.split("\n")
+        number = 0
 
-The nosodes are grouped into categories:
-- A: Нозоды кокков (bacteria cocci)
-- B: Нозоды бактерий (bacteria bacilli) — starts around number 22-23
-- C: Нозоды риккетсий, простейших, гельминтов, микозов (protozoa/helminths/fungi) — starts around 90
-- D: Нозоды вирусов (viruses) — starts around 137
-- E: Токсические соединения (toxic compounds)
-- F: Радионуклиды (radionuclides)
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
 
-Extract ALL numbered nosode entries. For categories E and F, they usually only appear as letter codes without individual entries, so skip them.
+            if not line:
+                i += 1
+                continue
 
-Return JSON:
-{
-  "entries": [
-    {"number": 1, "name_lat": "Branhamella catarrhalis", "name_rus": "Бранхамелла катаральная", "category": "bacteria_cocci"},
-    ...
-  ]
-}
+            # Skip table headers
+            if any(line.startswith(kw) for kw in SKIP_KEYWORDS):
+                i += 1
+                continue
 
-Rules:
-- Fix obvious OCR errors in Latin names (e.g., "q" might be "g", "I" might be "l")
-- Keep Russian names as-is (fix only obvious OCR errors)
-- Map categories: A→bacteria_cocci, B→bacteria_bacilli, C→protozoa_helminths_fungi, D→virus
-- Include ALL entries (expect ~166 entries)
-- If parenthetical synonyms exist, include them in name_lat"""
+            # Skip footnotes (start with *)
+            if line.startswith("*"):
+                i += 1
+                continue
 
-        result = self.llm_call(system_prompt, f"OCR table text:\n\n{text}", max_tokens=8192)
+            # Detect category header (standalone letter or category description)
+            cat = self._detect_category(line)
+            if cat:
+                current_category = cat
+                i += 1
+                continue
 
-        try:
-            data = json.loads(result)
-            entries = data.get("entries", [])
-            return entries
-        except json.JSONDecodeError as e:
-            print(f"  LLM returned invalid JSON: {e}")
-            return []
+            # Latin line → this is a nosode entry
+            if re.match(r'^[A-Za-z(]', line):
+                number += 1
+                name_lat = self._clean_latin(line)
+                name_rus = ""
+
+                # Look ahead for Russian name on next non-empty line
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+
+                if j < len(lines):
+                    next_line = lines[j].strip()
+                    if next_line and re.match(r'^[А-ЯЁа-яё(«]', next_line):
+                        # Make sure it's not a category header
+                        if not self._detect_category(next_line):
+                            name_rus = next_line.rstrip(".,;:")
+                            j += 1
+
+                entries.append({
+                    "number": number,
+                    "name_lat": name_lat,
+                    "name_rus": name_rus,
+                    "category": current_category,
+                })
+                i = j
+                continue
+
+            # Skip other unrecognized lines
+            i += 1
+
+        return entries
+
+    def _detect_category(self, line: str) -> str | None:
+        """Detect category from line. Returns category key or None."""
+        stripped = line.strip()
+        cyrillic_to_latin = {"А": "A", "В": "B", "С": "C", "Е": "E"}
+
+        # Single letter on a line: "А", "B", "С", "D", "E", "F"
+        if len(stripped) == 1:
+            letter = stripped.upper()
+            if letter in cyrillic_to_latin.values() or letter in "ABCDEF":
+                return CATEGORY_MAP.get(letter)
+            if stripped in cyrillic_to_latin:
+                return CATEGORY_MAP.get(cyrillic_to_latin[stripped])
+
+        # "A  Нозоды коков", "D  Нозоды вирусов"
+        m = re.match(r'^([A-FА-Е])\s+Нозод', stripped, re.IGNORECASE)
+        if m:
+            letter = m.group(1).upper()
+            if letter in cyrillic_to_latin:
+                letter = cyrillic_to_latin[letter]
+            return CATEGORY_MAP.get(letter)
+
+        # Category description without letter prefix — collapse spaces for OCR
+        lower = stripped.lower()
+        collapsed = re.sub(r'\s+', '', lower)  # "ви русов" → "вирусов"
+
+        if "нозод" in collapsed and "коков" in collapsed:
+            return "bacteria_cocci"
+        if "нозод" in collapsed and "палоч" in collapsed:
+            return "bacteria_bacilli"
+        if "нозод" in collapsed and ("простейш" in collapsed or "гельминт" in collapsed or "микоз" in collapsed or "риккетс" in collapsed):
+            return "protozoa_helminths_fungi"
+        if "нозод" in collapsed and "вирус" in collapsed:
+            return "virus"
+        if "токсическ" in collapsed:
+            return "toxic_compounds"
+        if "радионуклид" in collapsed:
+            return "radionuclides"
+
+        return None
+
+    @staticmethod
+    def _clean_latin(name: str) -> str:
+        """Clean up Latin name from OCR artifacts."""
+        name = name.strip().rstrip(".,;:-")
+        # Fix common OCR substitutions
+        name = name.replace("q", "g").replace("Q", "G") if "q" in name.lower() else name
+        # But preserve legitimate 'q' in words like "Seqment"... actually "q" → "g" is the right fix
+        # for this OCR: "Asperqillus" → "Aspergillus", "Adenoqrippe" → "Adenogrippe"
+        name = re.sub(r"q(?=[a-z])", "g", name)
+        name = re.sub(r"Q(?=[a-z])", "G", name)
+        # Fix "**" markers
+        name = name.replace("**", "").strip()
+        # Collapse spaces
+        name = re.sub(r"\s+", " ", name).strip()
+        return name
