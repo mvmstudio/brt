@@ -171,6 +171,61 @@ async def init_schema(db: aiosqlite.Connection) -> None:
             UNIQUE(user_id, entity_type, entity_id)
         );
 
+        -- Справочник: Связь нозод→препарат (из таблиц 9-16 книги)
+        CREATE TABLE IF NOT EXISTS nosode_remedies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nosode_name TEXT NOT NULL,
+            nosode_id INTEGER,
+            remedy_name TEXT NOT NULL,
+            remedy_id INTEGER,
+            effectiveness INTEGER,
+            disease_system TEXT NOT NULL,
+            nosode_category TEXT,
+            source_page INTEGER,
+            table_number INTEGER
+        );
+
+        -- Справочник: Заболевание→нозоды с % (из табл. 17)
+        CREATE TABLE IF NOT EXISTS condition_nosodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            condition_name TEXT NOT NULL,
+            condition_id INTEGER,
+            nosode_names TEXT NOT NULL,
+            patient_count INTEGER,
+            percentage INTEGER,
+            is_primary INTEGER DEFAULT 0,
+            source_page INTEGER
+        );
+
+        -- Справочник: Несовместимость препаратов (из табл. 18)
+        CREATE TABLE IF NOT EXISTS remedy_incompatibility (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            remedy_name TEXT NOT NULL,
+            remedy_id INTEGER,
+            incompatible_remedy_name TEXT NOT NULL,
+            incompatible_remedy_id INTEGER,
+            source_page INTEGER
+        );
+
+        -- Справочник: Токсические химические вещества (стр. 230-245)
+        CREATE TABLE IF NOT EXISTS toxic_substances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name_rus TEXT NOT NULL,
+            name_eng TEXT,
+            category TEXT NOT NULL,
+            description TEXT,
+            source_page INTEGER
+        );
+
+        -- Справочник: Патоморфологические нозоды (стр. 246-260)
+        CREATE TABLE IF NOT EXISTS pathomorphological_nosodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            condition_name TEXT NOT NULL,
+            condition_name_lat TEXT,
+            disease_category TEXT NOT NULL,
+            source_page INTEGER
+        );
+
         -- Справочник: FTS по всем разделам
         CREATE VIRTUAL TABLE IF NOT EXISTS handbook_fts USING fts5(
             type,

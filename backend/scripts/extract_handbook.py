@@ -27,17 +27,28 @@ from scripts.extractors import (
     NosodesExtractor,
     EtiologyExtractor,
     OrganPreparationsExtractor,
+    NosodeRemediesExtractor,
+    ConditionNosodesExtractor,
+    RemedyIncompatibilityExtractor,
+    ToxicSubstancesExtractor,
+    PathomorphologicalExtractor,
 )
 
 # Handbook tables to drop/recreate (order matters for foreign keys)
 HANDBOOK_TABLES = [
     "handbook_fts",
+    "condition_nosodes",
+    "remedy_incompatibility",
+    "nosode_remedies",
+    "remedy_aliases",
     "remedy_symptoms",
     "remedies",
     "therapeutic_index",
     "nosodes",
     "etiology",
     "organ_preparations",
+    "toxic_substances",
+    "pathomorphological_nosodes",
 ]
 
 # Schema for handbook tables (same as in connection.py but for sync sqlite3)
@@ -62,7 +73,8 @@ HANDBOOK_SCHEMA = """
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         condition_name TEXT NOT NULL,
         remedies_list TEXT NOT NULL,
-        source_page INTEGER
+        source_page INTEGER,
+        disease_system TEXT
     );
 
     CREATE TABLE IF NOT EXISTS nosodes (
@@ -89,6 +101,64 @@ HANDBOOK_SCHEMA = """
         organ_name TEXT NOT NULL,
         organ_name_lat TEXT,
         manufacturer TEXT,
+        source_page INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS nosode_remedies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nosode_name TEXT NOT NULL,
+        nosode_id INTEGER,
+        remedy_name TEXT NOT NULL,
+        remedy_id INTEGER,
+        effectiveness INTEGER,
+        disease_system TEXT NOT NULL,
+        nosode_category TEXT,
+        source_page INTEGER,
+        table_number INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS remedy_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        alias TEXT NOT NULL,
+        canonical_remedy_id INTEGER REFERENCES remedies(id),
+        source TEXT DEFAULT 'book',
+        UNIQUE(alias)
+    );
+
+    CREATE TABLE IF NOT EXISTS condition_nosodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        condition_name TEXT NOT NULL,
+        condition_id INTEGER,
+        nosode_names TEXT NOT NULL,
+        patient_count INTEGER,
+        percentage INTEGER,
+        is_primary INTEGER DEFAULT 0,
+        source_page INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS remedy_incompatibility (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        remedy_name TEXT NOT NULL,
+        remedy_id INTEGER,
+        incompatible_remedy_name TEXT NOT NULL,
+        incompatible_remedy_id INTEGER,
+        source_page INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS toxic_substances (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name_rus TEXT NOT NULL,
+        name_eng TEXT,
+        category TEXT NOT NULL,
+        description TEXT,
+        source_page INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS pathomorphological_nosodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        condition_name TEXT NOT NULL,
+        condition_name_lat TEXT,
+        disease_category TEXT NOT NULL,
         source_page INTEGER
     );
 
@@ -184,6 +254,26 @@ def populate_fts(db_path: str) -> int:
         )
         count += 1
 
+    # Toxic substances
+    for row in conn.execute(
+        "SELECT id, name_rus, name_eng, category FROM toxic_substances"
+    ):
+        conn.execute(
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("toxic", row[1], f"{row[2] or ''} {row[3] or ''}", row[0]),
+        )
+        count += 1
+
+    # Pathomorphological nosodes
+    for row in conn.execute(
+        "SELECT id, condition_name, condition_name_lat, disease_category FROM pathomorphological_nosodes"
+    ):
+        conn.execute(
+            "INSERT INTO handbook_fts (type, name, content, entity_id) VALUES (?, ?, ?, ?)",
+            ("pathomorphological", row[1], f"{row[2] or ''} {row[3] or ''}", row[0]),
+        )
+        count += 1
+
     conn.commit()
     conn.close()
     return count
@@ -199,6 +289,11 @@ def print_report(db_path: str) -> None:
         "nosodes": "SELECT COUNT(*) FROM nosodes",
         "etiology": "SELECT COUNT(*) FROM etiology",
         "organ_preparations": "SELECT COUNT(*) FROM organ_preparations",
+        "nosode_remedies": "SELECT COUNT(*) FROM nosode_remedies",
+        "condition_nosodes": "SELECT COUNT(*) FROM condition_nosodes",
+        "remedy_incompatibility": "SELECT COUNT(*) FROM remedy_incompatibility",
+        "toxic_substances": "SELECT COUNT(*) FROM toxic_substances",
+        "pathomorphological_nosodes": "SELECT COUNT(*) FROM pathomorphological_nosodes",
         "handbook_fts": "SELECT COUNT(*) FROM handbook_fts",
     }
 
@@ -223,7 +318,7 @@ def main():
     parser = argparse.ArgumentParser(description="Extract handbook data from book OCR text")
     parser.add_argument(
         "--section",
-        choices=["therapeutic_index", "materia_medica", "nosodes", "etiology", "organ_preparations", "all"],
+        choices=["therapeutic_index", "materia_medica", "nosodes", "etiology", "organ_preparations", "nosode_remedies", "condition_nosodes", "remedy_incompatibility", "toxic_substances", "pathomorphological", "all"],
         default="all",
         help="Which section to extract (default: all)",
     )
@@ -242,12 +337,18 @@ def main():
     reset_tables(db_path)
 
     # Define extractors (no LLM client needed — all parsing is deterministic)
+    # nosode_remedies runs AFTER nosodes+materia_medica to resolve IDs
     extractors = {
         "therapeutic_index": lambda: TherapeuticIndexExtractor(db_path),
         "etiology": lambda: EtiologyExtractor(db_path),
         "nosodes": lambda: NosodesExtractor(db_path),
         "materia_medica": lambda: MateriaMedicaExtractor(db_path),
         "organ_preparations": lambda: OrganPreparationsExtractor(db_path),
+        "nosode_remedies": lambda: NosodeRemediesExtractor(db_path),
+        "condition_nosodes": lambda: ConditionNosodesExtractor(db_path),
+        "remedy_incompatibility": lambda: RemedyIncompatibilityExtractor(db_path),
+        "toxic_substances": lambda: ToxicSubstancesExtractor(db_path),
+        "pathomorphological": lambda: PathomorphologicalExtractor(db_path),
     }
 
     # Run selected extractors
@@ -264,6 +365,23 @@ def main():
             import traceback
             traceback.print_exc()
             results[section] = {"error": str(e)}
+
+    # Classify conditions by disease_system (links to etiology/nosode_remedies)
+    if args.section in ("all", "therapeutic_index"):
+        print("\n=== Classifying conditions by disease_system ===")
+        from scripts.classify_conditions import CLASSIFICATION
+        conn = sqlite3.connect(db_path)
+        classified = 0
+        for cond_id, ds in CLASSIFICATION.items():
+            cursor = conn.execute(
+                "UPDATE therapeutic_index SET disease_system = ? WHERE id = ?",
+                (ds, cond_id),
+            )
+            if cursor.rowcount > 0:
+                classified += 1
+        conn.commit()
+        conn.close()
+        print(f"  Classified {classified}/{len(CLASSIFICATION)} conditions")
 
     # Populate FTS
     print("\n=== Populating FTS index ===")
