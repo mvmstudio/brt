@@ -173,7 +173,7 @@ async def list_nosodes(
 
     rows = await db.execute_fetchall(
         f"SELECT id, number, name_lat, name_rus, category, source_page "
-        f"FROM nosodes {where} ORDER BY number LIMIT ? OFFSET ?",
+        f"FROM nosodes {where} ORDER BY name_lat LIMIT ? OFFSET ?",
         (*params, limit, offset),
     )
     total = await db.execute_fetchall(
@@ -547,7 +547,7 @@ async def get_relations(entity_type: str, entity_id: int):
         cn_rows = await db.execute_fetchall(
             "SELECT nosode_names, patient_count, percentage, is_primary "
             "FROM condition_nosodes WHERE condition_id = ? "
-            "ORDER BY percentage DESC",
+            "ORDER BY nosode_names",
             (entity_id,),
         )
         if not cn_rows:
@@ -556,7 +556,7 @@ async def get_relations(entity_type: str, entity_id: int):
             cn_rows = await db.execute_fetchall(
                 "SELECT nosode_names, patient_count, percentage, is_primary "
                 "FROM condition_nosodes WHERE condition_name = ? COLLATE NOCASE "
-                "ORDER BY percentage DESC",
+                "ORDER BY nosode_names",
                 (cond_name,),
             )
         if cn_rows:
@@ -597,7 +597,7 @@ async def get_relations(entity_type: str, entity_id: int):
             "FROM nosode_remedies nr "
             "WHERE nr.remedy_id = ? OR nr.remedy_name = ? COLLATE NOCASE "
             "   OR nr.remedy_name LIKE ? COLLATE NOCASE "
-            "ORDER BY nr.effectiveness DESC",
+            "ORDER BY nr.nosode_name",
             (entity_id, name_lat, f"{first_word}%"),
         )
         seen_nosode_names: set[str] = set()
@@ -654,7 +654,7 @@ async def get_relations(entity_type: str, entity_id: int):
         nr_rows = await db.execute_fetchall(
             "SELECT remedy_name, remedy_id, effectiveness, disease_system "
             "FROM nosode_remedies WHERE nosode_id = ? "
-            "ORDER BY effectiveness DESC",
+            "ORDER BY remedy_name",
             (entity_id,),
         )
 
@@ -664,7 +664,7 @@ async def get_relations(entity_type: str, entity_id: int):
             nr_rows = await db.execute_fetchall(
                 "SELECT remedy_name, remedy_id, effectiveness, disease_system "
                 "FROM nosode_remedies WHERE nosode_name LIKE ? COLLATE NOCASE "
-                "ORDER BY effectiveness DESC",
+                "ORDER BY remedy_name",
                 (f"%{name_lat.split()[0]}%",),
             )
 
@@ -702,7 +702,7 @@ async def get_relations(entity_type: str, entity_id: int):
             "SELECT condition_name, condition_id, nosode_names, percentage "
             "FROM condition_nosodes "
             "WHERE nosode_names LIKE ? COLLATE NOCASE "
-            "ORDER BY percentage DESC",
+            "ORDER BY condition_name",
             (f"%{nosode_stem}%",),
         )
         seen_cond_ids: set[int | None] = set()
@@ -730,7 +730,7 @@ async def get_relations(entity_type: str, entity_id: int):
             nr_rows = await db.execute_fetchall(
                 "SELECT remedy_name, remedy_id, effectiveness, disease_system "
                 "FROM nosode_remedies WHERE nosode_name LIKE ? COLLATE NOCASE "
-                "ORDER BY effectiveness DESC",
+                "ORDER BY remedy_name",
                 (f"%{agent_stem}%",),
             )
             seen_remedy_names: set[str] = set()
@@ -808,7 +808,7 @@ async def get_relations(entity_type: str, entity_id: int):
             nr_rows = await db.execute_fetchall(
                 "SELECT DISTINCT remedy_name, remedy_id, effectiveness "
                 "FROM nosode_remedies WHERE disease_system = ? "
-                "ORDER BY effectiveness DESC LIMIT 10",
+                "ORDER BY remedy_name LIMIT 10",
                 (nr_ds,),
             )
             seen_remedy_names_nr: set[str] = set()
