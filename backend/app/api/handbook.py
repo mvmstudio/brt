@@ -611,18 +611,19 @@ async def get_relations(entity_type: str, entity_id: int):
                     "disease_system": nr["disease_system"],
                 })
 
-        # Incompatible remedies from Table 18
+        # Incompatible remedies from Table 18 (bidirectional lookup)
         incompat_rows = await db.execute_fetchall(
-            "SELECT incompatible_remedy_name, incompatible_remedy_id "
+            "SELECT incompatible_remedy_name AS name, incompatible_remedy_id AS rid "
             "FROM remedy_incompatibility WHERE remedy_id = ? "
             "UNION "
-            "SELECT remedy_name, remedy_id "
+            "SELECT remedy_name AS name, remedy_id AS rid "
             "FROM remedy_incompatibility WHERE incompatible_remedy_id = ? "
             "ORDER BY 1",
             (entity_id, entity_id),
         )
         # Also try by name (most remedy_ids are NULL)
         if not incompat_rows:
+            first_word = name_lat.split()[0] if name_lat else ""
             incompat_rows = await db.execute_fetchall(
                 "SELECT incompatible_remedy_name AS name, incompatible_remedy_id AS rid "
                 "FROM remedy_incompatibility "
@@ -633,17 +634,12 @@ async def get_relations(entity_type: str, entity_id: int):
                 "WHERE incompatible_remedy_name = ? COLLATE NOCASE "
                 "   OR incompatible_remedy_name LIKE ? COLLATE NOCASE "
                 "ORDER BY 1",
-                (name_lat, f"{name_lat.split()[0]}%", name_lat, f"{name_lat.split()[0]}%"),
+                (name_lat, f"{first_word}%", name_lat, f"{first_word}%"),
             )
         if incompat_rows:
-            incompatible = []
-            for ir in incompat_rows:
-                d = dict(ir)
-                # UNION columns come back with first SELECT's names
-                ir_name = d.get("incompatible_remedy_name") or d.get("name") or d.get("remedy_name")
-                ir_id = d.get("incompatible_remedy_id") or d.get("rid") or d.get("remedy_id")
-                incompatible.append({"name": ir_name, "id": ir_id})
-            extra["incompatible_remedies"] = incompatible
+            extra["incompatible_remedies"] = [
+                {"name": ir["name"], "id": ir["rid"]} for ir in incompat_rows
+            ]
 
     elif entity_type == "nosode":
         rows = await db.execute_fetchall(
@@ -684,40 +680,37 @@ async def get_relations(entity_type: str, entity_id: int):
                     "disease_system": nr["disease_system"],
                 })
 
-        # 2. Related etiology via category mapping
-        cat = rows[0]["category"]
-        mapped_type = _CATEGORY_MAP.get(cat)
-        if mapped_type:
+        # 2. SPECIFIC etiology: find agents whose name matches this nosode
+        name_lat = rows[0]["name_lat"]
+        nosode_stem = name_lat.split()[0][:8] if name_lat else ""
+        if len(nosode_stem) >= 4:
             etio_rows = await db.execute_fetchall(
-                "SELECT id, agent_name FROM etiology WHERE agent_type = ? "
+                "SELECT id, agent_name FROM etiology "
+                "WHERE agent_name LIKE ? COLLATE NOCASE "
                 "ORDER BY agent_name",
-                (mapped_type,),
+                (f"%{nosode_stem}%",),
             )
             seen_etio_names: set[str] = set()
             for e in etio_rows:
                 if e["agent_name"] not in seen_etio_names:
                     seen_etio_names.add(e["agent_name"])
                     relations.append({"type": "etiology", "id": e["id"], "name": e["agent_name"]})
-                    if len(seen_etio_names) >= 10:
-                        break
 
-        # 3. Conditions via nosode_remedies disease_system
-        nr_ds_set: set[str] = set()
-        for nr in nr_rows:
-            nr_ds_set.add(nr["disease_system"])
-        etio_ds_set: set[str] = set()
-        for nds in nr_ds_set:
-            for eds in _NR_DS_TO_ETIO_DS.get(nds, []):
-                etio_ds_set.add(eds)
-        if etio_ds_set:
-            placeholders = ",".join("?" * len(etio_ds_set))
-            cond_rows = await db.execute_fetchall(
-                f"SELECT id, condition_name FROM therapeutic_index "
-                f"WHERE disease_system IN ({placeholders}) ORDER BY condition_name",
-                list(etio_ds_set),
-            )
-            for c in cond_rows:
-                relations.append({"type": "condition", "id": c["id"], "name": c["condition_name"]})
+        # 3. SPECIFIC conditions from condition_nosodes (Table 17)
+        # Find conditions where nosode_names contains this nosode's name
+        cn_rows = await db.execute_fetchall(
+            "SELECT condition_name, condition_id, nosode_names, percentage "
+            "FROM condition_nosodes "
+            "WHERE nosode_names LIKE ? COLLATE NOCASE "
+            "ORDER BY percentage DESC",
+            (f"%{nosode_stem}%",),
+        )
+        seen_cond_ids: set[int | None] = set()
+        for cn in cn_rows:
+            cid = cn["condition_id"]
+            if cid and cid not in seen_cond_ids:
+                seen_cond_ids.add(cid)
+                relations.append({"type": "condition", "id": cid, "name": cn["condition_name"]})
 
     elif entity_type == "etiology":
         rows = await db.execute_fetchall(
@@ -896,6 +889,7 @@ async def handbook_stats():
         "nosode_remedies": "SELECT COUNT(*) as cnt FROM nosode_remedies",
         "condition_nosodes": "SELECT COUNT(*) as cnt FROM condition_nosodes",
         "remedy_incompatibility": "SELECT COUNT(*) as cnt FROM remedy_incompatibility",
+        "remedy_aliases": "SELECT COUNT(*) as cnt FROM remedy_aliases",
         "toxic_substances": "SELECT COUNT(*) as cnt FROM toxic_substances",
         "pathomorphological_nosodes": "SELECT COUNT(*) as cnt FROM pathomorphological_nosodes",
     }

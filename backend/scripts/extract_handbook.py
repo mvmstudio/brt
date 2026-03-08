@@ -58,7 +58,8 @@ HANDBOOK_SCHEMA = """
         name_lat TEXT NOT NULL UNIQUE,
         name_rus TEXT,
         source_pages TEXT,
-        summary TEXT
+        summary TEXT,
+        content_source TEXT DEFAULT 'book'
     );
 
     CREATE TABLE IF NOT EXISTS remedy_symptoms (
@@ -74,7 +75,9 @@ HANDBOOK_SCHEMA = """
         condition_name TEXT NOT NULL,
         remedies_list TEXT NOT NULL,
         source_page INTEGER,
-        disease_system TEXT
+        disease_system TEXT,
+        description TEXT,
+        content_source TEXT DEFAULT 'book'
     );
 
     CREATE TABLE IF NOT EXISTS nosodes (
@@ -83,7 +86,10 @@ HANDBOOK_SCHEMA = """
         name_lat TEXT NOT NULL,
         name_rus TEXT,
         category TEXT,
-        source_page INTEGER
+        source_page INTEGER,
+        description TEXT,
+        remedies_list TEXT,
+        content_source TEXT DEFAULT 'book'
     );
 
     CREATE TABLE IF NOT EXISTS etiology (
@@ -92,7 +98,10 @@ HANDBOOK_SCHEMA = """
         agent_type TEXT NOT NULL,
         agent_name TEXT NOT NULL,
         agent_name_rus TEXT,
-        source_page INTEGER
+        source_page INTEGER,
+        description TEXT,
+        remedies_list TEXT,
+        content_source TEXT DEFAULT 'book'
     );
 
     CREATE TABLE IF NOT EXISTS organ_preparations (
@@ -101,7 +110,10 @@ HANDBOOK_SCHEMA = """
         organ_name TEXT NOT NULL,
         organ_name_lat TEXT,
         manufacturer TEXT,
-        source_page INTEGER
+        source_page INTEGER,
+        description TEXT,
+        remedies_list TEXT,
+        content_source TEXT DEFAULT 'book'
     );
 
     CREATE TABLE IF NOT EXISTS nosode_remedies (
