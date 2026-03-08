@@ -374,29 +374,27 @@ def _match_organ_to_disease_system(disease_category: str) -> str | None:
 
 
 async def _resolve_remedies(db, remedy_names: list[str]) -> list[dict]:
-    """Resolve remedy names → relation dicts. Only returns remedies with real content (remedy_symptoms)."""
+    """Resolve remedy names → relation dicts via remedies + remedy_aliases. Skip unresolved."""
     result = []
     seen_ids: set[int] = set()
     for name in remedy_names:
-        # 1. Direct match in remedies (must have symptoms = real card)
+        # 1. Direct match in remedies
         matched = await db.execute_fetchall(
-            "SELECT id, name_lat FROM remedies WHERE name_lat = ? COLLATE NOCASE "
-            "AND EXISTS (SELECT 1 FROM remedy_symptoms WHERE remedy_id = remedies.id)",
+            "SELECT id, name_lat FROM remedies WHERE name_lat = ? COLLATE NOCASE",
             (name,),
         )
-        # 2. Via remedy_aliases → canonical remedy (must have symptoms)
+        # 2. Via remedy_aliases → canonical remedy
         if not matched:
             matched = await db.execute_fetchall(
                 "SELECT r.id, r.name_lat FROM remedy_aliases ra "
                 "JOIN remedies r ON r.id = ra.canonical_remedy_id "
-                "WHERE ra.alias = ? COLLATE NOCASE "
-                "AND EXISTS (SELECT 1 FROM remedy_symptoms WHERE remedy_id = r.id)",
+                "WHERE ra.alias = ? COLLATE NOCASE",
                 (name,),
             )
         if matched and matched[0]["id"] not in seen_ids:
             seen_ids.add(matched[0]["id"])
             result.append({"type": "remedy", "id": matched[0]["id"], "name": matched[0]["name_lat"]})
-        # No id:null entries — skip unresolved
+        # Skip unresolved — no id:null entries
     return result
 
 
