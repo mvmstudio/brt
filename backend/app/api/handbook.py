@@ -348,6 +348,19 @@ _ORGAN_KEYWORDS_TO_DS: list[tuple[str, str]] = [
     ("паркинсон", "Заболевания Нервной Системы"),
     ("селезенк", "Заболевания Селезенки"),
     ("костного мозга", "Заболевания Костного Мозга"),
+    ("слух", "Заболевания Органов Слуха"),
+    ("оболочек мозга", "Заболевания Нервной Системы"),
+    ("черепно-мозговых", "Заболевания Нервной Системы"),
+    ("различных отделов", "Заболевания Нервной Системы"),
+    ("соединительной ткани", "Заболевания Кожи"),
+    ("струмэктом", "Заболевания Щитовидной Железы"),
+    ("миндалин", "Заболевания Миндалин И Лимфоузлов"),
+    ("лимфоузл", "Заболевания Миндалин И Лимфоузлов"),
+    ("околоушн", "Заболевания Околоушных Желез"),
+    ("развития", "Заболеваний Органов И Систем"),
+    ("гиперплаз", "Заболеваний Органов И Систем"),
+    ("диабет", "Заболевания Сердечно-сосудистой Системы"),
+    ("периартериит", "Заболевания Сердечно-сосудистой Системы"),
 ]
 
 
@@ -361,19 +374,29 @@ def _match_organ_to_disease_system(disease_category: str) -> str | None:
 
 
 async def _resolve_remedies(db, remedy_names: list[str]) -> list[dict]:
-    """Resolve remedy names → relation dicts via direct name match."""
+    """Resolve remedy names → relation dicts. Only returns remedies with real content (remedy_symptoms)."""
     result = []
     seen_ids: set[int] = set()
     for name in remedy_names:
+        # 1. Direct match in remedies (must have symptoms = real card)
         matched = await db.execute_fetchall(
-            "SELECT id, name_lat FROM remedies WHERE name_lat = ? COLLATE NOCASE",
+            "SELECT id, name_lat FROM remedies WHERE name_lat = ? COLLATE NOCASE "
+            "AND EXISTS (SELECT 1 FROM remedy_symptoms WHERE remedy_id = remedies.id)",
             (name,),
         )
+        # 2. Via remedy_aliases → canonical remedy (must have symptoms)
+        if not matched:
+            matched = await db.execute_fetchall(
+                "SELECT r.id, r.name_lat FROM remedy_aliases ra "
+                "JOIN remedies r ON r.id = ra.canonical_remedy_id "
+                "WHERE ra.alias = ? COLLATE NOCASE "
+                "AND EXISTS (SELECT 1 FROM remedy_symptoms WHERE remedy_id = r.id)",
+                (name,),
+            )
         if matched and matched[0]["id"] not in seen_ids:
             seen_ids.add(matched[0]["id"])
             result.append({"type": "remedy", "id": matched[0]["id"], "name": matched[0]["name_lat"]})
-        elif not matched:
-            result.append({"type": "remedy", "id": None, "name": name})
+        # No id:null entries — skip unresolved
     return result
 
 
@@ -388,7 +411,7 @@ async def get_relations(entity_type: str, entity_id: int):
 
     if entity_type == "condition":
         rows = await db.execute_fetchall(
-            "SELECT id, condition_name, remedies_list FROM therapeutic_index WHERE id = ?",
+            "SELECT id, condition_name, remedies_list, disease_system FROM therapeutic_index WHERE id = ?",
             (entity_id,),
         )
         if not rows:
@@ -396,6 +419,16 @@ async def get_relations(entity_type: str, entity_id: int):
         center = {"type": "condition", "id": rows[0]["id"], "name": rows[0]["condition_name"]}
         raw_names = json.loads(rows[0]["remedies_list"])
         relations.extend(await _resolve_remedies(db, raw_names))
+
+        # Etiology + nosodes via disease_system
+        ds = rows[0]["disease_system"]
+        if ds:
+            etio_rows = await db.execute_fetchall(
+                "SELECT id, agent_name FROM etiology WHERE disease_system = ? LIMIT 15",
+                (ds,),
+            )
+            for e in etio_rows:
+                relations.append({"type": "etiology", "id": e["id"], "name": e["agent_name"]})
 
     elif entity_type == "remedy":
         rows = await db.execute_fetchall(

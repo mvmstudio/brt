@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Loader2, ChevronDown, ChevronUp } from "lucide-react"
-import { api, type Condition, type ConditionDetail, type EntityType } from "@/lib/api"
+import { api, type Condition, type EntityType } from "@/lib/api"
 import { FavoriteButton } from "./FavoriteButton"
 import { RelationsSection } from "./RelationsSection"
 
@@ -21,35 +21,14 @@ export function ConditionsTab({ initialExpandedId, onAuthRequired, onNavigate, o
   const [expandedIds, setExpandedIds] = useState<Set<number>>(
     initialExpandedId != null ? new Set([initialExpandedId]) : new Set()
   )
-  const [details, setDetails] = useState<Record<number, ConditionDetail>>({})
-  const [detailLoading, setDetailLoading] = useState<Set<number>>(new Set())
 
   const toggle = useCallback((id: number) => {
     setExpandedIds((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-        // Load detail if not cached
-        if (!details[id]) loadDetail(id)
-      }
+      if (next.has(id)) next.delete(id); else next.add(id)
       return next
     })
-  }, [details])
-
-  const loadDetail = async (id: number) => {
-    setDetailLoading((prev) => new Set(prev).add(id))
-    try {
-      const data = await api.handbook.condition(id)
-      setDetails((prev) => ({ ...prev, [id]: data }))
-    } catch { /* silent */ }
-    setDetailLoading((prev) => {
-      const next = new Set(prev)
-      next.delete(id)
-      return next
-    })
-  }
+  }, [])
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -70,7 +49,6 @@ export function ConditionsTab({ initialExpandedId, onAuthRequired, onNavigate, o
   useEffect(() => {
     if (initialExpandedId != null) {
       setExpandedIds((prev) => new Set(prev).add(initialExpandedId))
-      if (!details[initialExpandedId]) loadDetail(initialExpandedId)
     }
   }, [initialExpandedId])
 
@@ -122,8 +100,6 @@ export function ConditionsTab({ initialExpandedId, onAuthRequired, onNavigate, o
 
       {filtered.map((c) => {
         const isExpanded = expandedIds.has(c.id)
-        const detail = details[c.id]
-        const isDetailLoading = detailLoading.has(c.id)
         return (
           <div
             key={c.id}
@@ -160,53 +136,6 @@ export function ConditionsTab({ initialExpandedId, onAuthRequired, onNavigate, o
 
             {isExpanded && (
               <div className="px-3 pb-3 border-t" style={{ borderColor: "var(--border-subtle)" }}>
-                <div className="flex items-center gap-1 mt-2 mb-1.5">
-                  <span className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
-                    Препараты ({c.remedies.length})
-                  </span>
-                </div>
-
-                {isDetailLoading ? (
-                  <div className="flex justify-center py-3">
-                    <Loader2 size={16} strokeWidth={1.25} className="animate-spin" style={{ color: "var(--text-muted)" }} />
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {detail ? (
-                      detail.remedies_details.map((rd, i) => (
-                        rd.id != null ? (
-                          <button
-                            key={i}
-                            onClick={() => onNavigate?.("remedy", rd.id!)}
-                            className="text-xs px-2 py-1 rounded-full transition-opacity hover:opacity-80"
-                            style={{ background: "rgba(92, 184, 92, 0.15)", color: "#5CB85C" }}
-                          >
-                            {rd.name_lat}
-                          </button>
-                        ) : (
-                          <span
-                            key={i}
-                            className="text-xs px-2 py-1 rounded-full opacity-50"
-                            style={{ background: "var(--accent-glow)", color: "var(--text-muted)" }}
-                          >
-                            {rd.name_lat}
-                          </span>
-                        )
-                      ))
-                    ) : (
-                      c.remedies.map((name, i) => (
-                        <span
-                          key={i}
-                          className="text-xs px-2 py-1 rounded-full"
-                          style={{ background: "var(--accent-glow)", color: "var(--accent-warm)" }}
-                        >
-                          {name}
-                        </span>
-                      ))
-                    )}
-                  </div>
-                )}
-
                 <RelationsSection
                   entityType="condition"
                   entityId={c.id}
